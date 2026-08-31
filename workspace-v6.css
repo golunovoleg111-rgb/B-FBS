@@ -5,51 +5,34 @@
   fill-opacity:.10 !important;
   filter:none !important;
 }
-.placed-svg-object .object-svg-icon{
-  font-size:16px;
-  font-weight:500;
-}
-.placed-svg-object .object-svg-label{
-  font-size:10px;
-  font-weight:500;
-}
-.placed-svg-object.selected .object-body{
-  stroke-width:2px !important;
-  stroke-dasharray:5 4 !important;
-  fill-opacity:.16 !important;
-}
-.object-preview{
-  stroke-width:1.5px !important;
-  stroke-dasharray:6 5 !important;
-  fill-opacity:.10 !important;
-}
+.placed-svg-object .object-svg-icon{font-size:16px;font-weight:500}
+.placed-svg-object .object-svg-label{font-size:10px;font-weight:500}
+.placed-svg-object.selected .object-body{stroke-width:2px !important;stroke-dasharray:5 4 !important;fill-opacity:.16 !important}
+.object-preview{stroke-width:1.5px !important;stroke-dasharray:6 5 !important;fill-opacity:.10 !important}
 
 /* Published warehouse is a clean presentation, not an editor canvas. */
-.editor-stage.published-mode{
-  background:#fff;
-  border-color:#e4e7eb;
-  cursor:default;
-}
+.editor-stage.published-mode{background:#fff;border-color:#e4e7eb;cursor:default}
 .editor-stage.published-mode .grid-line{display:none !important}
 .editor-stage.published-mode .minimap{display:none !important}
 .canvas-wrap.published-mode .editor-status{color:#7b8491}
 .canvas-wrap.published-mode .canvas-toolbar{margin-bottom:10px}
 
-/* Full-screen map: no editor chrome, warehouse centred by the existing fit action. */
-.editor-stage:fullscreen,
-.editor-stage.is-fullscreen{
-  width:100vw;
-  height:100vh;
-  min-height:100vh;
-  border:0;
-  border-radius:0;
-  background:#fff;
-}
-.editor-stage:fullscreen .minimap,
-.editor-stage.is-fullscreen .minimap{display:none !important}
-.editor-stage:fullscreen .warehouse-svg,
-.editor-stage.is-fullscreen .warehouse-svg{background:#fff}
+/* Internal presentation mode: this is intentionally NOT browser Fullscreen API. */
+body.presentation-mode{overflow:hidden !important}
+body.presentation-mode #root{position:fixed;inset:0;width:100vw;height:100vh;overflow:hidden;background:#fff}
+body.presentation-mode .editor-stage.presentation-mode{position:fixed !important;inset:0 !important;width:100vw !important;height:100vh !important;min-height:100vh !important;border:0 !important;border-radius:0 !important;background:#fff !important;z-index:9999 !important}
+body.presentation-mode .editor-stage.presentation-mode .warehouse-svg{width:100% !important;height:100% !important;background:#fff !important}
+body.presentation-mode .editor-stage.presentation-mode .minimap,
+body.presentation-mode .editor-stage.presentation-mode .grid-line,
+body.presentation-mode .editor-stage.presentation-mode .zoom-controls,
+body.presentation-mode .editor-stage.presentation-mode .canvas-toolbar,
+body.presentation-mode .editor-stage.presentation-mode .editor-status,
+body.presentation-mode .editor-stage.presentation-mode .warehouse-actions,
+body.presentation-mode .editor-stage.presentation-mode .workspace-sidebar{display:none !important}
+body.presentation-mode .canvas-wrap{position:fixed !important;inset:0 !important;width:100vw !important;height:100vh !important;margin:0 !important;padding:0 !important;z-index:9998 !important;background:#fff !important}
+body.presentation-mode .canvas-wrap > *:not(.editor-stage){display:none !important}
+body.presentation-mode .editor-stage.presentation-mode svg{background:#fff !important}
 
 @media(max-width:700px){
-  .editor-stage:fullscreen{height:100vh}
+  body.presentation-mode .editor-stage.presentation-mode{width:100vw !important;height:100vh !important}
 }
