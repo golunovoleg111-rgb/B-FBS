@@ -1,52 +1,42 @@
-:root {
-  font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
-  color: #172033;
-  background: #f4f6f8;
-  font-synthesis: none;
-  text-rendering: optimizeLegibility;
-}
-
+:root { font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; color: #172033; background: #f4f6f8; font-synthesis: none; text-rendering: optimizeLegibility; }
 * { box-sizing: border-box; }
 body { margin: 0; min-width: 320px; background: #f4f6f8; }
-button { font: inherit; }
-
+button, input { font: inherit; }
 .app-shell { min-height: 100vh; display: flex; }
 .sidebar { width: 286px; flex: 0 0 286px; min-height: 100vh; padding: 28px 18px 20px; background: #111827; color: #fff; display: flex; flex-direction: column; }
 .brand { display: flex; align-items: center; gap: 12px; padding: 0 10px 30px; }
-.brand-mark { width: 40px; height: 40px; display: grid; place-items: center; border: 1px solid #4b5563; border-radius: 10px; font-weight: 800; font-size: 19px; }
+.brand-mark, .login-mark { width: 40px; height: 40px; display: grid; place-items: center; border: 1px solid #4b5563; border-radius: 10px; font-weight: 800; }
 .brand-name { font-size: 17px; font-weight: 800; letter-spacing: .04em; }
-.brand-subtitle { margin-top: 3px; color: #9ca3af; font-size: 11px; }
+.brand-subtitle, .login-description { margin-top: 3px; color: #9ca3af; font-size: 11px; }
 .navigation { display: grid; gap: 5px; }
 .nav-item { width: 100%; min-height: 48px; border: 0; border-radius: 9px; padding: 0 12px; display: flex; align-items: center; gap: 12px; background: transparent; color: #aeb6c4; text-align: left; cursor: pointer; transition: .15s ease; }
 .nav-item:hover { background: #1b2434; color: #fff; }
 .nav-item.active { background: #fff; color: #111827; font-weight: 650; }
-.nav-index { width: 22px; font-size: 10px; font-variant-numeric: tabular-nums; opacity: .55; }
-.sidebar-footer { margin-top: auto; padding: 16px 10px 0; border-top: 1px solid #273244; color: #8f99aa; font-size: 11px; display: flex; align-items: center; gap: 8px; }
-.status-dot { width: 7px; height: 7px; border-radius: 50%; background: #6b7280; }
+.nav-index { width: 22px; font-size: 10px; opacity: .55; }
+.sidebar-footer { margin-top: auto; padding: 16px 10px 0; border-top: 1px solid #273244; color: #8f99aa; font-size: 11px; }
+.status-dot { display: inline-block; width: 7px; height: 7px; margin-right: 8px; border-radius: 50%; background: #6b7280; }
 .main-content { min-width: 0; flex: 1; }
 .topbar { min-height: 104px; padding: 25px 38px; display: flex; align-items: center; justify-content: space-between; background: #fff; border-bottom: 1px solid #e4e7eb; }
 .eyebrow { color: #8992a1; font-size: 10px; font-weight: 750; letter-spacing: .12em; }
 h1 { margin: 5px 0 0; font-size: 25px; line-height: 1.2; letter-spacing: -.02em; }
-.user-badge { display: flex; align-items: center; gap: 10px; font-size: 13px; font-weight: 650; }
+.user-controls, .user-badge { display: flex; align-items: center; gap: 10px; }
+.user-badge { font-size: 13px; font-weight: 650; }
 .avatar { width: 34px; height: 34px; display: grid; place-items: center; border-radius: 50%; background: #eef0f3; color: #3d4654; font-size: 12px; }
+.logout-button { border: 1px solid #d8dde4; background: #fff; border-radius: 8px; padding: 8px 12px; color: #566173; cursor: pointer; font-size: 12px; }
 .content-area { padding: 38px; }
 .empty-state { min-height: calc(100vh - 180px); border: 1px dashed #cdd3db; border-radius: 14px; background: rgba(255,255,255,.55); display: grid; place-content: center; justify-items: center; text-align: center; padding: 40px; }
 .empty-icon { width: 52px; height: 52px; display: grid; place-items: center; border: 1px solid #d8dde4; border-radius: 12px; color: #697386; font-size: 12px; font-weight: 750; }
 .empty-state h2 { margin: 18px 0 7px; font-size: 20px; }
 .empty-state p { margin: 0; max-width: 460px; color: #737d8c; font-size: 13px; line-height: 1.6; }
-
-@media (max-width: 820px) {
-  .sidebar { width: 220px; flex-basis: 220px; }
-  .topbar, .content-area { padding-left: 22px; padding-right: 22px; }
-}
-
-@media (max-width: 640px) {
-  .app-shell { display: block; }
-  .sidebar { width: 100%; min-height: auto; padding: 16px; }
-  .brand { padding-bottom: 16px; }
-  .navigation { grid-template-columns: repeat(2, minmax(0, 1fr)); }
-  .sidebar-footer { display: none; }
-  .topbar { min-height: 90px; padding: 18px; }
-  .content-area { padding: 18px; }
-  .empty-state { min-height: 60vh; }
-}
+.login-page { min-height: 100vh; display: grid; place-items: center; padding: 24px; background: #f4f6f8; }
+.login-card { width: min(100%, 390px); padding: 38px; background: #fff; border: 1px solid #e1e5ea; border-radius: 14px; box-shadow: 0 18px 50px rgba(17,24,39,.08); }
+.login-mark { margin-bottom: 24px; background: #111827; color: #fff; border-color: #111827; }
+.login-card h1 { margin-top: 8px; font-size: 26px; }
+.login-description { color: #737d8c; font-size: 13px; margin: 8px 0 26px; }
+.login-form { display: grid; gap: 16px; }
+.login-form label { display: grid; gap: 7px; color: #4d5868; font-size: 12px; font-weight: 650; }
+.login-form input { width: 100%; height: 44px; border: 1px solid #d8dde4; border-radius: 8px; outline: none; padding: 0 12px; color: #172033; background: #fff; }
+.login-form input:focus { border-color: #697386; }
+.primary-button { height: 44px; margin-top: 4px; border: 0; border-radius: 8px; background: #111827; color: #fff; cursor: pointer; font-weight: 650; }
+.login-error { padding: 10px 12px; border: 1px solid #e2d7d7; border-radius: 8px; background: #faf6f6; color: #7b4b4b; font-size: 12px; }
+@media (max-width: 640px) { .app-shell { display: block; } .sidebar { width: 100%; min-height: auto; padding: 16px; } .brand { padding-bottom: 16px; } .navigation { grid-template-columns: repeat(2, minmax(0, 1fr)); } .sidebar-footer { display: none; } .topbar { min-height: 90px; padding: 18px; } .content-area { padding: 18px; } .empty-state { min-height: 60vh; } .login-card { padding: 28px; } }
