@@ -1,0 +1,55 @@
+/* B-FBS Workspace v6 — restrained object styling and published presentation. */
+.placed-svg-object .object-body{
+  stroke-width:1.5px !important;
+  stroke-dasharray:6 5 !important;
+  fill-opacity:.10 !important;
+  filter:none !important;
+}
+.placed-svg-object .object-svg-icon{
+  font-size:16px;
+  font-weight:500;
+}
+.placed-svg-object .object-svg-label{
+  font-size:10px;
+  font-weight:500;
+}
+.placed-svg-object.selected .object-body{
+  stroke-width:2px !important;
+  stroke-dasharray:5 4 !important;
+  fill-opacity:.16 !important;
+}
+.object-preview{
+  stroke-width:1.5px !important;
+  stroke-dasharray:6 5 !important;
+  fill-opacity:.10 !important;
+}
+
+/* Published warehouse is a clean presentation, not an editor canvas. */
+.editor-stage.published-mode{
+  background:#fff;
+  border-color:#e4e7eb;
+  cursor:default;
+}
+.editor-stage.published-mode .grid-line{display:none !important}
+.editor-stage.published-mode .minimap{display:none !important}
+.canvas-wrap.published-mode .editor-status{color:#7b8491}
+.canvas-wrap.published-mode .canvas-toolbar{margin-bottom:10px}
+
+/* Full-screen map: no editor chrome, warehouse centred by the existing fit action. */
+.editor-stage:fullscreen,
+.editor-stage.is-fullscreen{
+  width:100vw;
+  height:100vh;
+  min-height:100vh;
+  border:0;
+  border-radius:0;
+  background:#fff;
+}
+.editor-stage:fullscreen .minimap,
+.editor-stage.is-fullscreen .minimap{display:none !important}
+.editor-stage:fullscreen .warehouse-svg,
+.editor-stage.is-fullscreen .warehouse-svg{background:#fff}
+
+@media(max-width:700px){
+  .editor-stage:fullscreen{height:100vh}
+}
