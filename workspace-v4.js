@@ -98,14 +98,9 @@
     return `<div class="warehouse-manager"><div class="warehouse-manager-label">СКЛАД</div><div class="warehouse-manager-row"><select id="warehouse-select" ${warehouses.length?'':'disabled'}>${warehouses.map(w=>`<option value="${esc(w.id)}" ${w.id===activeWarehouseId?'selected':''}>${esc(w.name)}</option>`).join('')}</select><button class="btn" id="new-warehouse">+ Склад</button><button class="btn danger-outline" id="delete-warehouse" ${activeWarehouseId?'':'disabled'}>Удалить</button></div>${activeWarehouseId?`<div class="warehouse-manager-meta">${published?'Опубликованная схема':'Черновик'} · ${draft.width} × ${draft.height} м</div>`:'<div class="warehouse-manager-meta">Складов нет — создайте новый.</div>'}</div>`;
   }
 
-  function enhancedManagementPanel(){
-    return `<div class="stage-indicator"><span class="stage-number">✓</span><div><b>Рабочая схема</b><small>Опубликованная версия</small></div></div>${warehouseSwitcher()}<p class="hint">Сотрудники видят опубликованную схему. Для изменений администратор создаёт отдельную копию.</p><button class="btn primary wide" id="edit-copy" ${published?'':'disabled'}>Создать копию для редактирования</button><div class="object-section"><div class="panel-title">Зоны хранения</div><p class="hint">Зоны добавляются после публикации схемы.</p><button class="btn wide" id="add-zone-mode" ${published?'':'disabled'}>Добавить зону на плане</button></div><div class="object-section"><div class="panel-title">Проверка схемы</div>${validationHtml()}</div><div class="object-section"><div class="panel-title">Версии</div><div class="version-list">${versions.length?versions.slice().reverse().map(v=>`<div><b>v${v.version}</b><span>${esc(v.date)}</span></div>`).join(''):'Нет сохранённых версий'}</div></div>`;
-  }
-
   const originalWorkspaceView=window.workspaceView;
   window.workspaceView=function(){
     const result=originalWorkspaceView();
-    if(workspaceMode!=='management')return result;
     return result.replace(/<aside class="tool-panel panel">/,`<aside class="tool-panel panel">${warehouseSwitcher()}`);
   };
 
@@ -128,7 +123,6 @@
   }
   window.clampPan=enhancedClampPan;
 
-  const originalFit=window.fitView;
   window.fitView=function(){
     const source=workspaceMode==='management'&&published?published:draft;
     const b=boundsFor(source.walls);
@@ -153,13 +147,13 @@
 
   function enhancedRender(){
     if(sessionStorage.getItem(AUTH_KEY)!=='admin'){loginView();return}
+    if(activeTab==='workspace'&&workspaceMode==='management')enhancedClampPan();
     let c=activeTab==='dashboard'?dashboardView():activeTab==='workspace'?workspaceView():placeholderView(TABS.find(t=>t[0]===activeTab));
     root.innerHTML=shell(c);bindCommon();
     if(activeTab==='workspace')bindWorkspace();
   }
   window.render=enhancedRender;
 
-  // Initialise/migrate the existing single-warehouse state created by previous versions.
   migrateCurrent();
   window.addEventListener('resize',()=>{if(activeTab==='workspace'){enhancedClampPan();updateCanvas()}});
   render();
