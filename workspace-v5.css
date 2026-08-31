@@ -1,0 +1,21 @@
+/* B-FBS Workspace v5 — compact object layout and interaction polish. */
+.editor-stage{position:relative;isolation:isolate}
+.warehouse-svg{z-index:2}
+.world-objects{z-index:4}
+.minimap{z-index:20;transition:opacity .14s ease,transform .14s ease;opacity:.92}
+.minimap.is-hidden{opacity:0;transform:scale(.96);pointer-events:none}
+.placed-svg-object{cursor:move}
+.placed-svg-object .object-body{stroke-width:1.5;vector-effect:non-scaling-stroke;shape-rendering:geometricPrecision}
+.placed-svg-object.selected .object-body{stroke-width:2.5}
+.placed-svg-object .object-svg-icon,.placed-svg-object .object-svg-label{pointer-events:none;paint-order:stroke;stroke:#fff;stroke-width:3px;stroke-linejoin:round}
+.placed-svg-object .object-svg-icon{font-weight:700}
+.placed-svg-object .object-svg-label{font-weight:600}
+.placed-svg-object .object-delete{fill:#fff;stroke:#8b95a3;stroke-width:1.5;vector-effect:non-scaling-stroke;cursor:pointer}
+.placed-svg-object .object-delete-x{fill:#566171;font-size:12px;font-weight:700;text-anchor:middle;cursor:pointer;pointer-events:none}
+.placed-svg-object .object-resize{fill:#fff;fill-opacity:.9;stroke:#687383;stroke-width:1.5;vector-effect:non-scaling-stroke;cursor:nwse-resize}
+.placed-svg-object .object-action,.placed-svg-object .object-resize{pointer-events:auto}
+.placed-svg-object.compact .object-svg-label{display:none}
+.placed-svg-object.compact .object-svg-icon{font-size:13px}
+.placed-svg-object.micro .object-svg-icon{font-size:10px}
+.object-action{filter:drop-shadow(0 1px 1px rgba(23,32,51,.12))}
+@media(max-width:900px){.minimap{width:150px;height:88px}}
