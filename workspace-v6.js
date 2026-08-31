@@ -1,12 +1,32 @@
-/* B-FBS Workspace v6.2 — published presentation and stable fullscreen layer. */
+/* B-FBS Workspace v6.3 — internal presentation mode. */
 (function(){
   const originalRender = window.render;
+  let presentationMode = false;
 
   function isWorkspace(){ return activeTab === 'workspace'; }
   function isPublished(){ return isWorkspace() && workspaceMode === 'management' && !!published; }
 
+  function fitMap(){
+    requestAnimationFrame(function(){
+      const fit = document.getElementById('zoom-fit');
+      if(fit) fit.click();
+    });
+  }
+
+  function setPresentation(enabled){
+    presentationMode = !!enabled;
+    document.body.classList.toggle('presentation-mode', presentationMode);
+    const stage = document.getElementById('floor');
+    if(stage) stage.classList.toggle('presentation-mode', presentationMode);
+    if(presentationMode) fitMap();
+  }
+
   function enhance(){
-    if(!isWorkspace()) return;
+    if(!isWorkspace()){
+      setPresentation(false);
+      return;
+    }
+
     const stage = document.getElementById('floor');
     const wrap = document.querySelector('.canvas-wrap');
     if(!stage || !wrap) return;
@@ -14,6 +34,8 @@
     const publishedMode = isPublished();
     stage.classList.toggle('published-mode', publishedMode);
     wrap.classList.toggle('published-mode', publishedMode);
+
+    if(!publishedMode && presentationMode) setPresentation(false);
 
     const svg = document.getElementById('warehouse-svg');
     if(svg){
@@ -28,39 +50,29 @@
     const gridButton = document.getElementById('grid-toggle');
     if(gridButton) gridButton.hidden = publishedMode;
 
-    let button = controls.querySelector('[data-fullscreen]');
+    let button = controls.querySelector('[data-presentation]');
     if(!button){
       button = document.createElement('button');
       button.type = 'button';
-      button.dataset.fullscreen = '1';
+      button.dataset.presentation = '1';
       button.className = 'fullscreen-control';
       controls.appendChild(button);
-
-      button.addEventListener('click', async function(){
-        try{
-          if(document.fullscreenElement){
-            await document.exitFullscreen();
-            return;
-          }
-          await document.documentElement.requestFullscreen();
-        }catch(err){
-          console.warn('Fullscreen unavailable', err);
-        }
+      button.addEventListener('click', function(){
+        if(!isPublished()) return;
+        setPresentation(!presentationMode);
       });
     }
 
-    button.hidden = !publishedMode;
-    button.textContent = document.fullscreenElement ? 'Выйти из полного экрана' : 'На полный экран';
+    button.hidden = !publishedMode || presentationMode;
+    button.textContent = presentationMode ? 'Выйти из полного экрана' : 'На полный экран';
   }
 
-  document.addEventListener('fullscreenchange', function(){
-    requestAnimationFrame(function(){
-      enhance();
-      if(document.fullscreenElement){
-        const fit = document.getElementById('zoom-fit');
-        if(fit) fit.click();
-      }
-    });
+  document.addEventListener('keydown', function(event){
+    if(event.key === 'Escape' && presentationMode){
+      event.preventDefault();
+      setPresentation(false);
+      requestAnimationFrame(enhance);
+    }
   });
 
   window.render = function(){
