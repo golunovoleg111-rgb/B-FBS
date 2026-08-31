@@ -1,13 +1,30 @@
 <!doctype html>
 <html lang="ru">
-  <head>
-    <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <meta name="description" content="B-FBS — складская рабочая система" />
-    <title>B-FBS</title>
-  </head>
-  <body>
-    <div id="root"></div>
-    <script type="module" src="/src/main.jsx"></script>
-  </body>
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="description" content="B-FBS — складская система">
+  <title>B-FBS</title>
+  <style>
+    :root{font-family:Inter,Arial,sans-serif;color:#172033;background:#f4f6f8}*{box-sizing:border-box}body{margin:0;min-width:320px}.app{min-height:100vh;display:flex}.side{width:280px;background:#111827;color:#fff;padding:28px 18px;display:flex;flex-direction:column}.brand{display:flex;align-items:center;gap:12px;padding:0 10px 30px}.mark{width:40px;height:40px;border:1px solid #4b5563;border-radius:10px;display:grid;place-items:center;font-weight:800}.name{font-weight:800;letter-spacing:.05em}.sub{font-size:11px;color:#9ca3af;margin-top:3px}.nav{display:grid;gap:5px}.nav button{min-height:48px;border:0;border-radius:9px;background:transparent;color:#aeb6c4;text-align:left;padding:0 12px;display:flex;gap:12px;align-items:center;cursor:pointer;font-size:13px}.nav button:hover{background:#1b2434;color:white}.nav button.active{background:#fff;color:#111827;font-weight:650}.num{width:22px;font-size:10px;opacity:.55}.foot{margin-top:auto;border-top:1px solid #273244;padding:16px 10px 0;color:#8f99aa;font-size:11px}.main{flex:1;min-width:0}.top{height:104px;background:#fff;border-bottom:1px solid #e4e7eb;padding:25px 38px;display:flex;justify-content:space-between;align-items:center}.eyebrow{font-size:10px;font-weight:750;letter-spacing:.12em;color:#8992a1}.title{margin:5px 0 0;font-size:25px;letter-spacing:-.02em}.user{display:flex;gap:10px;align-items:center;font-size:13px;font-weight:650}.avatar{width:34px;height:34px;border-radius:50%;background:#eef0f3;display:grid;place-items:center;font-size:12px}.content{padding:38px}.empty{min-height:calc(100vh - 180px);border:1px dashed #cdd3db;border-radius:14px;background:#fff8;display:grid;place-content:center;justify-items:center;text-align:center;padding:40px}.icon{width:52px;height:52px;border:1px solid #d8dde4;border-radius:12px;display:grid;place-items:center;color:#697386;font-size:12px;font-weight:750}.empty h2{margin:18px 0 7px;font-size:20px}.empty p{margin:0;color:#737d8c;font-size:13px;line-height:1.6}@media(max-width:700px){.app{display:block}.side{width:100%;padding:16px}.brand{padding-bottom:16px}.nav{grid-template-columns:repeat(2,1fr)}.foot{display:none}.top{height:auto;padding:18px}.content{padding:18px}}
+  </style>
+</head>
+<body>
+<div class="app">
+  <aside class="side">
+    <div class="brand"><div class="mark">B</div><div><div class="name">B-FBS</div><div class="sub">Складская система</div></div></div>
+    <nav class="nav" id="nav"></nav>
+    <div class="foot">● Система готова</div>
+  </aside>
+  <main class="main">
+    <header class="top"><div><div class="eyebrow">B-FBS</div><div class="title" id="title">Главный экран</div></div><div class="user"><span class="avatar">A</span>Admin1</div></header>
+    <section class="content"><div class="empty"><div class="icon" id="icon">01</div><h2 id="heading">Главный экран</h2><p>Раздел подготовлен. Функциональность будет добавляться поэтапно.</p></div></section>
+  </main>
+</div>
+<script>
+const tabs=['Главный экран','Рабочее пространство','Учет склада','Заявка на перемещение','Ревизия','Личный кабинет','Сборочное задание'];
+const nav=document.getElementById('nav'),title=document.getElementById('title'),heading=document.getElementById('heading'),icon=document.getElementById('icon');
+tabs.forEach((tab,i)=>{const b=document.createElement('button');b.innerHTML='<span class="num">'+String(i+1).padStart(2,'0')+'</span><span>'+tab+'</span>';if(i===0)b.className='active';b.onclick=()=>{document.querySelectorAll('.nav button').forEach(x=>x.classList.remove('active'));b.classList.add('active');title.textContent=tab;heading.textContent=tab;icon.textContent=String(i+1).padStart(2,'0')};nav.appendChild(b)});
+</script>
+</body>
 </html>
