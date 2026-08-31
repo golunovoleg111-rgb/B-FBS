@@ -19,7 +19,10 @@
   }
   function normalizeObjects(){
     if(!draft?.objects?.length||typeof bounds!=='function')return false;
-    const b=bounds();if(!b)return false;let changed=false;const margin=35;
+    const b=bounds();if(!b)return false;let changed=false;
+    // Keep objects visually close to the warehouse wall while leaving only a small
+    // clearance so their borders do not sit directly on top of the wall stroke.
+    const margin=8;
     draft.objects.forEach(o=>{changed=clampObject(o,b,margin)||changed});
     for(let pass=0;pass<12;pass++){
       let moved=false;
