@@ -1,6 +1,6 @@
 /* B-FBS workspace visual/interactions hotfix. Loaded after app.js. */
 (function(){
-  const originalRenderObjects = window.renderObjects;
+  const originalPointerUp=window.onPointerUp;
 
   function labelLines(name){
     const map={
@@ -43,7 +43,6 @@
       {edge:'right',d:Math.abs(x+w-b.maxX),center:y+h/2}
     ];
     const hit=candidates.sort((a,b)=>a.d-b.d)[0];
-    /* The user may draw slightly inside the wall. We snap the result to it. */
     const tolerance=180;
     if(hit.d>tolerance)return null;
     const doorLong=Math.max(80,Math.min(180,(hit.edge==='top'||hit.edge==='bottom'?w:h)||100));
@@ -58,37 +57,28 @@
 
   function hotfixPointerUp(e){
     if(!pointerAction)return;
-    if(pointerAction==='draw-object'){
-      const a=drawStart,b=drawCurrent;
-      const x=Math.min(a.x,b.x),y=Math.min(a.y,b.y),w=Math.abs(b.x-a.x),h=Math.abs(b.y-a.y);
-      if(w>20&&h>20){
-        let placed=null;
-        if(selectedObjectType==='Вход')placed=nearestEntrance(x,y,w,h);
-        else if(insideWarehouse(x,y,w,h))placed={x,y,w,h};
-        if(placed){
-          commitHistory();
-          draft.objects.push({name:selectedObjectType,...placed});
-          selected={kind:'object',index:draft.objects.length-1};
-          tool='select';
-        }else{
-          alert(selectedObjectType==='Вход'?'Наведите прямоугольник входа на любую стену склада.':'Объект нельзя разместить за пределами стен склада.');
-        }
-        drawStart=null;drawCurrent=null;pointerAction=null;
-        e.currentTarget.classList.remove('panning');
-        try{e.currentTarget.releasePointerCapture(e.pointerId)}catch(_){}
-        persist();render();
-        return;
+    if(pointerAction!=='draw-object')return originalPointerUp(e);
+    const a=drawStart,b=drawCurrent;
+    const x=Math.min(a.x,b.x),y=Math.min(a.y,b.y),w=Math.abs(b.x-a.x),h=Math.abs(b.y-a.y);
+    if(w>20&&h>20){
+      let placed=null;
+      if(selectedObjectType==='Вход')placed=nearestEntrance(x,y,w,h);
+      else if(insideWarehouse(x,y,w,h))placed={x,y,w,h};
+      if(placed){
+        commitHistory();
+        draft.objects.push({name:selectedObjectType,...placed});
+        selected={kind:'object',index:draft.objects.length-1};
+        tool='select';
+      }else{
+        alert(selectedObjectType==='Вход'?'Наведите прямоугольник входа на любую стену склада.':'Объект нельзя разместить за пределами стен склада.');
       }
-      drawStart=null;drawCurrent=null;pointerAction=null;
-      try{e.currentTarget.releasePointerCapture(e.pointerId)}catch(_){}
-      updateCanvas();
-      return;
     }
-    return onPointerUp(e);
+    drawStart=null;drawCurrent=null;pointerAction=null;
+    e.currentTarget.classList.remove('panning');
+    try{e.currentTarget.releasePointerCapture(e.pointerId)}catch(_){}
+    persist();render();
   }
 
   window.onPointerUp=hotfixPointerUp;
-
-  /* Rebind after replacing renderObjects/onPointerUp. */
   if(typeof render==='function')render();
 })();
