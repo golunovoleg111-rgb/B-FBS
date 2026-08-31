@@ -28,7 +28,7 @@
   function validObject(o,w){
     const b=wb(w);if(!b)return false;
     if(o.x<b.l+2||o.y<b.t+2||o.x+o.w>b.r-2||o.y+o.h>b.b-2)return false;
-    return !w.objects.some((x,i)=>i!== (sel?.kind==='object'?sel.i:-1) && overlap(o,x));
+    return !w.objects.some((x,i)=>i!==(sel?.kind==='object'?sel.i:-1)&&overlap(o,x));
   }
 
   const originalRenderW=renderW;
@@ -43,9 +43,7 @@
     st.onmousedown=e=>{
       if(e.button!==0&&e.button!==1)return;
       const p=point(e),w=aw(),target=e.target.closest?.('[data-wall],[data-object],[data-zone]');
-      if(e.button===1||(e.button===0&&!target&&tool==='select')){
-        action={type:'pan',sx:e.clientX,sy:e.clientY};st.classList.add('panning');return;
-      }
+      if(e.button===1||(e.button===0&&!target&&tool==='select')){action={type:'pan',sx:e.clientX,sy:e.clientY};st.classList.add('panning');return;}
       if(e.button!==0)return;
       if(mode==='design'&&tool==='eraser'&&target?.dataset.wall!==undefined){w.walls.splice(+target.dataset.wall,1);sel=null;save();originalRenderW();return;}
       if(mode==='design'&&tool==='select'&&target?.dataset.wall!==undefined){sel={kind:'wall',i:+target.dataset.wall};action={type:'wall',sx:p.x,sy:p.y};originalRenderW();return;}
@@ -57,7 +55,7 @@
     };
     st.onmousemove=e=>{
       if(!action)return;const p=point(e),w=aw();
-      if(action.type==='pan'){const r=st.getBoundingClientRect(),vw=WORLD.w/zoom,vh=WORLD.h/zoom;pan.x-= (e.clientX-action.sx)/r.width*vw;pan.y-=(e.clientY-action.sy)/r.height*vh;action.sx=e.clientX;action.sy=e.clientY;clampCamera();originalRenderW();return;}
+      if(action.type==='pan'){const r=st.getBoundingClientRect(),vw=WORLD.w/zoom,vh=WORLD.h/zoom;pan.x-=(e.clientX-action.sx)/r.width*vw;pan.y-=(e.clientY-action.sy)/r.height*vh;action.sx=e.clientX;action.sy=e.clientY;clampCamera();originalRenderW();return;}
       if(action.type==='draw-wall'||action.type==='draw-object'){draw.x2=sp(p.x);draw.y2=sp(p.y);originalRenderW();return;}
       if(action.type==='object-move'){const o=w.objects[sel.i],b=wb(w);if(o&&b){o.x=clamp(sp(p.x-action.offsetX),b.l+2,b.r-o.w-2);o.y=clamp(sp(p.y-action.offsetY),b.t+2,b.b-o.h-2);}originalRenderW();return;}
       if(action.type==='wall'){const wall=w.walls[sel.i],b=wb(w);if(wall?.type==='rect'&&b){wall.x=clamp(sp(wall.x+(p.x-action.sx)),b.l,b.r-wall.w);wall.y=clamp(sp(wall.y+(p.y-action.sy)),b.t,b.b-wall.h);action.sx=p.x;action.sy=p.y;originalRenderW();}}
@@ -106,10 +104,14 @@
   window.workspace=function(){if(mode==='management'){const old=grid;grid=false;const html=originalWorkspace();grid=old;return html;}return originalWorkspace();};
 
   window.fullMap=function(){
-    const w=aw(),b=wb(w);if(!b){return;}
+    const w=aw(),b=wb(w);if(!b)return;
     open(`<div class="fullscreen-modal"><div class="fullscreen-head"><b>${esc(w.name)} · полная карта</b><span>Демонстрационный режим</span><button class="icon-btn" data-close>×</button></div><div class="fullscreen-map"><svg viewBox="${b.l} ${b.t} ${b.r-b.l} ${b.b-b.t}" preserveAspectRatio="xMidYMid meet">${walls(w.walls)}${objects(w.objects)}${zones(w.zones)}</svg></div></div>`);
   };
 
-  /* Re-render once so the overlay is active after the base script has loaded. */
-  if(sessionStorage.getItem(AUTH)==='admin')setTimeout(()=>render(),0);
+  const originalRender=render;
+  window.render=function(){
+    if(sessionStorage.getItem(AUTH)==='admin'&&tab==='workspace'&&mode==='management'&&aw()?.published&&!initialFitDone){fitWarehouse();}
+    originalRender();
+  };
+  if(sessionStorage.getItem(AUTH)==='admin')setTimeout(()=>window.render(),0);
 })();
