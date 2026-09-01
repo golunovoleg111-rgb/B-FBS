@@ -135,12 +135,17 @@
     if(!backendAvailable||!token())return false;
     if(!force&&localStorage.getItem(PENDING_KEY)==='1')return false;
     const result=await requestApi('/api/state');
+    let userChanged=false;
+    if(result.user&&JSON.stringify(result.user)!==JSON.stringify(currentUser)){
+      currentUser=result.user;sessionStorage.setItem(USER_KEY,JSON.stringify(currentUser));userChanged=true;
+      if(!allowed(activeTab))activeTab='dashboard';
+    }
     if(result.revision===0&&!result.state?.warehouses&&warehouses().length){serverRevision=0;await pushState();return true}
     if(force||result.revision>serverRevision){
       applyState(result.state);serverRevision=result.revision;localStorage.setItem(REVISION_KEY,String(serverRevision));localStorage.removeItem(PENDING_KEY);
       return true;
     }
-    return false;
+    return userChanged;
   }
   async function pollState(){
     clearTimeout(pollTimer);
