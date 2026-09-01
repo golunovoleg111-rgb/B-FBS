@@ -836,7 +836,105 @@
     if(!wms.nomenclature.length){toast('Сначала добавьте или импортируйте номенклатуру.','warning');return}
     const warehouseId=box?.warehouseId||activeWarehouseId(),zoneId=box?.zoneId||defaultZoneId||((warehouseId===activeWarehouseId()?zones:warehouses().find(item=>item.id===warehouseId)?.zones)||[])[0]?.id;
     if(!zoneId){toast('Сначала создайте зону хранения.','warning');return}
-    openModal(box?'Изменить коробку':'Новая коробка',`<form class="wms-form" id="box-form"><label>ID коробки<input name="id" value="${esc(box?.id||nextBoxId())}" ${box?'readonly':''} required></label><label>Зона<select name="zoneId">${zoneOptions(warehouseId,zoneId)}</select></label><label>Товар<select name="barcode">${skuOptions(box?.items?.[0]?.barcode||'')}</select></label><label>${box?'Добавить к остатку':'Начальное количество'}<input name="quantity" type="number" min="0" value="${box?0:1}"></label>${box?`<label class="check-row"><input name="locked" type="checkbox" ${box.locked?'checked':''}> Заблокировать операции</label>`:''}<div class="form-error"></div><div class="modal-actions"><button type="button" class="btn" data-close>Отмена</button><button class="btn primary">Сохранить</button></div></form>`,(modal,close)=>{modal.querySelector('form').onsubmit=event=>{event.preventDefault();const form=event.currentTarget,data=Object.fromEntries(new FormData(form)),zone=findZone(warehouseId,data.zoneId),count=wms.boxes.filter(item=>item.warehouseId===warehouseId&&item.zoneId===data.zoneId&&item.id!==box?.id).length;if(zone?.locked){form.querySelector('.form-error').innerHTML='<div class="error">Зона заблокирована.</div>';return}if(zone?.capacity&&count>=Number(zone.capacity)){form.querySelector('.form-error').innerHTML='<div class="error">Вместимость зоны исчерпана.</div>';return}if(!box&&wms.boxes.some(item=>item.id.toLowerCase()===data.id.trim().toLowerCase())){form.querySelector('.form-error').innerHTML='<div class="error">Такой ID коробки уже существует.</div>';return}const sku=itemByBarcode(data.barcode),quantity=Math.max(0,Number(data.quantity)||0),target=box||{id:data.id.trim(),qrCode:`BFBS:BOX:${data.id.trim()}`,warehouseId,items:[],createdAt:new Date().toISOString(),locked:false};target.zoneId=data.zoneId;target.locked=box?form.elements.locked.checked:false;if(quantity){const item=upsertBoxItem(target,sku,quantity);recordMovement(box?'replenishment':'initial_stock',quantity,target,item)}target.updatedAt=new Date().toISOString();if(!box)wms.boxes.push(target);saveWms(`${box?'Изменена':'Создана'} коробка ${target.id}`);close();render()}})}
+    const selectedBarcode=box?.items?.[0]?.barcode||'';
+    openModal(box?'Изменить коробку':'Новая коробка',`<form class="wms-form" id="box-form">
+      <label>ID коробки<input name="id" value="${esc(box?.id||nextBoxId())}" ${box?'readonly':''} required></label>
+      <label>Зона<select name="zoneId">${zoneOptions(warehouseId,zoneId)}</select></label>
+      <div class="barcode-scan-block">
+        <div class="barcode-scan-head"><div><b>Сканирование ШК</b><small>Сканер может работать как клавиатура: наведите курсор сюда и отсканируйте товар.</small></div><span class="scan-indicator" id="box-scan-indicator">Готов к сканированию</span></div>
+        <input id="box-barcode-scan" inputmode="numeric" autocomplete="off" placeholder="Отсканируйте или введите ШК товара" value="${esc(selectedBarcode)}">
+        <div class="scan-result" id="box-scan-result">${selectedBarcode?esc((itemByBarcode(selectedBarcode)?.article||'')+' · '+(itemByBarcode(selectedBarcode)?.size||'')):'После успешного сканирования товар выберется автоматически.'}</div>
+      </div>
+      <label>Товар<select name="barcode">${skuOptions(selectedBarcode)}</select></label>
+      <label>${box?'Добавить к остатку':'Начальное количество'}<input name="quantity" type="number" min="0" value="${box?0:1}"></label>
+      ${box?`<label class="check-row"><input name="locked" type="checkbox" ${box.locked?'checked':''}> Заблокировать операции</label>`:''}
+      <div class="form-error"></div>
+      <div class="modal-actions"><button type="button" class="btn" data-close>Отмена</button><button class="btn primary">Сохранить</button></div>
+    </form>`,(modal,close)=>{
+      const form=modal.querySelector('form');
+      const scanInput=modal.querySelector('#box-barcode-scan');
+      const scanResult=modal.querySelector('#box-scan-result');
+      const scanIndicator=modal.querySelector('#box-scan-indicator');
+      const barcodeSelect=form.elements.barcode;
+      const quantityInput=form.elements.quantity;
+
+      const recognizeBarcode=(raw,{notify=false}={})=>{
+        const value=String(raw||'').trim();
+        if(!value){
+          scanIndicator.textContent='Готов к сканированию';
+          scanIndicator.className='scan-indicator';
+          scanResult.textContent='После успешного сканирования товар выберется автоматически.';
+          return null;
+        }
+        const sku=itemByBarcode(value);
+        if(!sku){
+          scanIndicator.textContent='ШК не найден';
+          scanIndicator.className='scan-indicator error';
+          scanResult.textContent=`В номенклатуре нет ШК ${value}`;
+          if(notify)toast('Штрихкод не найден в номенклатуре.','warning');
+          return null;
+        }
+        barcodeSelect.value=sku.barcode;
+        barcodeSelect.dispatchEvent(new Event('input',{bubbles:true}));
+        barcodeSelect.dispatchEvent(new Event('change',{bubbles:true}));
+        scanIndicator.textContent='Распознано';
+        scanIndicator.className='scan-indicator success';
+        scanResult.innerHTML=`<b>${esc(sku.article)}</b><span>Размер ${esc(sku.size)} · ШК ${esc(sku.barcode)}</span>`;
+        if(notify)toast(`Распознано: ${sku.article} · ${sku.size}`,'success');
+        return sku;
+      };
+
+      let scanTimer=0;
+      scanInput.addEventListener('input',()=>{
+        clearTimeout(scanTimer);
+        const value=scanInput.value.trim();
+        if(!value){recognizeBarcode('');return}
+        // Hardware scanners usually deliver the whole barcode within a few ms.
+        // A short debounce also keeps manual typing comfortable.
+        scanTimer=setTimeout(()=>{
+          const sku=recognizeBarcode(value);
+          if(sku)quantityInput?.focus();
+        },90);
+      });
+      scanInput.addEventListener('keydown',event=>{
+        if(event.key!=='Enter')return;
+        event.preventDefault();
+        clearTimeout(scanTimer);
+        const sku=recognizeBarcode(scanInput.value,{notify:true});
+        if(sku){
+          scanInput.value=sku.barcode;
+          quantityInput?.focus();
+          quantityInput?.select?.();
+        }else{
+          scanInput.select();
+        }
+      });
+
+      barcodeSelect.addEventListener('change',()=>{
+        const sku=itemByBarcode(barcodeSelect.value);
+        if(!sku)return;
+        scanInput.value=sku.barcode;
+        recognizeBarcode(sku.barcode);
+      });
+
+      requestAnimationFrame(()=>{scanInput.focus();scanInput.select()});
+
+      form.onsubmit=event=>{
+        event.preventDefault();
+        const data=Object.fromEntries(new FormData(form)),zone=findZone(warehouseId,data.zoneId),count=wms.boxes.filter(item=>item.warehouseId===warehouseId&&item.zoneId===data.zoneId&&item.id!==box?.id).length;
+        if(zone?.locked){form.querySelector('.form-error').innerHTML='<div class="error">Зона заблокирована.</div>';return}
+        if(zone?.capacity&&count>=Number(zone.capacity)){form.querySelector('.form-error').innerHTML='<div class="error">Вместимость зоны исчерпана.</div>';return}
+        if(!box&&wms.boxes.some(item=>item.id.toLowerCase()===data.id.trim().toLowerCase())){form.querySelector('.form-error').innerHTML='<div class="error">Такой ID коробки уже существует.</div>';return}
+        const sku=itemByBarcode(data.barcode);
+        if(!sku){form.querySelector('.form-error').innerHTML='<div class="error">Выберите или отсканируйте товар из номенклатуры.</div>';return}
+        const quantity=Math.max(0,Number(data.quantity)||0),target=box||{id:data.id.trim(),qrCode:`BFBS:BOX:${data.id.trim()}`,warehouseId,items:[],createdAt:new Date().toISOString(),locked:false};
+        target.zoneId=data.zoneId;target.locked=box?form.elements.locked.checked:false;
+        if(quantity){const item=upsertBoxItem(target,sku,quantity);recordMovement(box?'replenishment':'initial_stock',quantity,target,item)}
+        target.updatedAt=new Date().toISOString();if(!box)wms.boxes.push(target);
+        saveWms(`${box?'Изменена':'Создана'} коробка ${target.id}`);close();render()
+      };
+    })
+  }
   function deleteBox(box){
     if(!box)return false;
     const quantity=boxQuantity(box);
