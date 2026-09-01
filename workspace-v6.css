@@ -1,4 +1,4 @@
-/* B-FBS Workspace v6 — restrained object styling and published presentation. */
+/* B-FBS Workspace v6.4 — restrained objects and stable published presentation. */
 .placed-svg-object .object-body{
   stroke-width:1.5px !important;
   stroke-dasharray:6 5 !important;
@@ -11,15 +11,31 @@
 .object-preview{stroke-width:1.5px !important;stroke-dasharray:6 5 !important;fill-opacity:.10 !important}
 
 /* Published warehouse is a clean presentation, not an editor canvas. */
-.editor-stage.published-mode{background:#fff;border-color:#e4e7eb;cursor:default}
+.editor-stage.published-mode{background:#fff;border-color:#e4e7eb;cursor:grab}
+.editor-stage.published-mode.panning{cursor:grabbing}
 .editor-stage.published-mode .grid-line{display:none !important}
 .editor-stage.published-mode .minimap{display:none !important}
+.editor-stage.published-mode .placed-svg-object,
+.editor-stage.published-mode .placed-svg-object .object-body{cursor:grab}
+.editor-stage.published-mode.panning .placed-svg-object,
+.editor-stage.published-mode.panning .placed-svg-object .object-body{cursor:grabbing}
 .canvas-wrap.published-mode .editor-status{color:#7b8491}
 .canvas-wrap.published-mode .canvas-toolbar{margin-bottom:10px}
 
 /* Internal presentation mode: this is intentionally NOT browser Fullscreen API. */
 body.presentation-mode{overflow:hidden !important}
 body.presentation-mode #root{position:fixed;inset:0;width:100vw;height:100vh;overflow:hidden;background:#fff}
+body.presentation-mode .side,
+body.presentation-mode .top,
+body.presentation-mode .workspace-head,
+body.presentation-mode .tool-panel,
+body.presentation-mode .canvas-toolbar,
+body.presentation-mode .canvas-bottom{display:none !important}
+body.presentation-mode .app,
+body.presentation-mode .main,
+body.presentation-mode .content,
+body.presentation-mode .workspace,
+body.presentation-mode .editor-layout{width:100vw !important;height:100vh !important;min-height:0 !important;margin:0 !important;padding:0 !important;display:block !important}
 body.presentation-mode .editor-stage.presentation-mode{position:fixed !important;inset:0 !important;width:100vw !important;height:100vh !important;min-height:100vh !important;border:0 !important;border-radius:0 !important;background:#fff !important;z-index:9999 !important}
 body.presentation-mode .editor-stage.presentation-mode .warehouse-svg{width:100% !important;height:100% !important;background:#fff !important}
 body.presentation-mode .editor-stage.presentation-mode .minimap,
@@ -32,7 +48,9 @@ body.presentation-mode .editor-stage.presentation-mode .workspace-sidebar{displa
 body.presentation-mode .canvas-wrap{position:fixed !important;inset:0 !important;width:100vw !important;height:100vh !important;margin:0 !important;padding:0 !important;z-index:9998 !important;background:#fff !important}
 body.presentation-mode .canvas-wrap > *:not(.editor-stage){display:none !important}
 body.presentation-mode .editor-stage.presentation-mode svg{background:#fff !important}
+body.presentation-mode .editor-stage.presentation-mode .floor-note{display:none !important}
 
 @media(max-width:700px){
   body.presentation-mode .editor-stage.presentation-mode{width:100vw !important;height:100vh !important}
 }
+
