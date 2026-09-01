@@ -9,14 +9,20 @@ const XLSX = require('xlsx');
 
 const ROOT = __dirname;
 const PORT = Number(process.env.PORT || 8080);
-const DATA_DIR = path.resolve(process.env.BFBS_DATA_DIR || path.join(ROOT, 'data'));
+const CLOUD_PROVIDER = process.env.RAILWAY_ENVIRONMENT ? 'railway' : '';
+const RAILWAY_VOLUME_DIR = String(process.env.RAILWAY_VOLUME_MOUNT_PATH || '').trim();
+const DATA_DIR = path.resolve(process.env.BFBS_DATA_DIR || RAILWAY_VOLUME_DIR || path.join(ROOT, 'data'));
 const DB_PATH = path.join(DATA_DIR, 'b-fbs.sqlite');
+const PERSISTENT_STORAGE = CLOUD_PROVIDER !== 'railway' || !!(RAILWAY_VOLUME_DIR || process.env.BFBS_DATA_DIR);
 const SESSION_TTL_MS = Number(process.env.BFBS_SESSION_HOURS || 24) * 60 * 60 * 1000;
 const MAX_BODY = 10 * 1024 * 1024;
 const ROLES = new Set(['admin', 'manager', 'picker', 'auditor']);
 const GOOGLE_SHEET_ID = process.env.BFBS_GOOGLE_SHEET_ID || '1oaf7MiFLdMpOI-syYOaJEeXpIyGRLzkGkUXvlMbJroU';
 const GOOGLE_SHEET_GID = process.env.BFBS_GOOGLE_SHEET_GID || '0';
 
+if(CLOUD_PROVIDER === 'railway' && !PERSISTENT_STORAGE){
+  console.warn('[B-FBS] Railway volume is not attached. SQLite data will be ephemeral until a volume is mounted.');
+}
 fs.mkdirSync(DATA_DIR, {recursive:true});
 const db = new DatabaseSync(DB_PATH);
 db.exec(`
@@ -82,6 +88,9 @@ function audit(userId, action, entityType = null, entityId = null, details = nul
 
 const admin = db.prepare('SELECT id FROM users WHERE login=?').get('Admin1');
 if(!admin){
+  if(CLOUD_PROVIDER && !process.env.BFBS_ADMIN_PASSWORD){
+    throw new Error('BFBS_ADMIN_PASSWORD is required for the first cloud deployment.');
+  }
   const timestamp = now();
   const id = crypto.randomUUID();
   db.prepare('INSERT INTO users(id,login,name,role,password_hash,active,created_at,updated_at) VALUES(?,?,?,?,?,1,?,?)')
@@ -181,7 +190,18 @@ async function googleSummaryItems(){
 
 async function api(req, res, pathname){
   if(req.method === 'GET' && pathname === '/api/health'){
-    send(res, 200, {ok:true, service:'B-FBS', database:'sqlite', time:now(), wbConfigured:!!process.env.WB_API_TOKEN});
+    const stateRow = db.prepare('SELECT revision,updated_at FROM app_state WHERE id=1').get();
+    send(res, 200, {
+      ok:true,
+      service:'B-FBS',
+      database:'sqlite',
+      storage:PERSISTENT_STORAGE?'persistent':'ephemeral',
+      cloud:CLOUD_PROVIDER||'local',
+      revision:Number(stateRow?.revision||0),
+      stateUpdatedAt:stateRow?.updated_at||null,
+      time:now(),
+      wbConfigured:!!process.env.WB_API_TOKEN
+    });
     return;
   }
   if(req.method === 'POST' && pathname === '/api/auth/login'){
@@ -365,4 +385,20 @@ const server = http.createServer(async (req,res)=>{
 server.listen(PORT, '0.0.0.0', ()=>{
   console.log(`B-FBS server: http://0.0.0.0:${PORT}`);
   console.log(`Database: ${DB_PATH}`);
+  console.log(`Storage: ${PERSISTENT_STORAGE?'persistent':'ephemeral'}${CLOUD_PROVIDER?` (${CLOUD_PROVIDER})`:''}`);
 });
+
+let shuttingDown=false;
+function shutdown(signal){
+  if(shuttingDown)return;
+  shuttingDown=true;
+  console.log(`[B-FBS] ${signal}: graceful shutdown`);
+  server.close(()=>{
+    try{db.exec('PRAGMA wal_checkpoint(TRUNCATE)')}catch(_){}
+    try{db.close()}catch(_){}
+    process.exit(0);
+  });
+  setTimeout(()=>process.exit(1),10000).unref();
+}
+process.on('SIGTERM',()=>shutdown('SIGTERM'));
+process.on('SIGINT',()=>shutdown('SIGINT'));
