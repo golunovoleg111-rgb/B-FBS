@@ -162,6 +162,12 @@
   },true);
   document.addEventListener('keydown',event=>{if(event.key==='Escape')closeSelect()});
   window.addEventListener('resize',closeSelect);
-  window.addEventListener('scroll',closeSelect,true);
+  document.addEventListener('scroll',event=>{
+    if(!openSelectState)return;
+    const target=event.target;
+    // Scrolling the dropdown itself is part of using it and must not close it.
+    if(target===openSelectState.menu||openSelectState.menu.contains?.(target))return;
+    closeSelect();
+  },true);
   enhance();
 })();
