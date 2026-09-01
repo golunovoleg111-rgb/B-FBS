@@ -22,3 +22,19 @@ jobs:
         run: pnpm install --frozen-lockfile
       - name: Syntax check
         run: pnpm run check
+      - name: Server integration tests
+        env:
+          BFBS_ADMIN_PASSWORD: CI-Admin-Password-123!
+          BFBS_TEST_ADMIN_PASSWORD: CI-Admin-Password-123!
+          BFBS_DATA_DIR: ${{ runner.temp }}/b-fbs-data
+        run: |
+          node server.js > "${{ runner.temp }}/b-fbs-server.log" 2>&1 &
+          SERVER_PID=$!
+          trap 'kill $SERVER_PID || true' EXIT
+          for i in {1..30}; do
+            if curl -fsS http://127.0.0.1:8080/api/health >/dev/null; then break; fi
+            sleep 1
+          done
+          curl -fsS http://127.0.0.1:8080/api/health
+          pnpm run test:smoke
+          pnpm run test:shared

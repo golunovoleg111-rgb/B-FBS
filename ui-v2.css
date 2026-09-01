@@ -1109,3 +1109,5 @@ select.ui-native-select{
   .bulk-template-row .btn,.bulk-template-row input[type="file"]{width:100%;max-width:none}
   .bulk-replenish-intro>div{align-items:flex-start;flex-direction:column}
 }
+
+.connection-badge.warning:before{background:#d09a43!important;box-shadow:0 0 0 4px rgba(208,154,67,.10)!important}
