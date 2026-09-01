@@ -1,0 +1,322 @@
+'use strict';
+
+const http = require('node:http');
+const fs = require('node:fs');
+const path = require('node:path');
+const crypto = require('node:crypto');
+const {DatabaseSync} = require('node:sqlite');
+const XLSX = require('xlsx');
+
+const ROOT = __dirname;
+const PORT = Number(process.env.PORT || 8080);
+const DATA_DIR = path.resolve(process.env.BFBS_DATA_DIR || path.join(ROOT, 'data'));
+const DB_PATH = path.join(DATA_DIR, 'b-fbs.sqlite');
+const SESSION_TTL_MS = Number(process.env.BFBS_SESSION_HOURS || 24) * 60 * 60 * 1000;
+const MAX_BODY = 10 * 1024 * 1024;
+const ROLES = new Set(['admin', 'manager', 'picker', 'auditor']);
+
+fs.mkdirSync(DATA_DIR, {recursive:true});
+const db = new DatabaseSync(DB_PATH);
+db.exec(`
+  PRAGMA journal_mode = WAL;
+  PRAGMA foreign_keys = ON;
+  CREATE TABLE IF NOT EXISTS users (
+    id TEXT PRIMARY KEY,
+    login TEXT NOT NULL UNIQUE COLLATE NOCASE,
+    name TEXT NOT NULL,
+    role TEXT NOT NULL,
+    password_hash TEXT NOT NULL,
+    active INTEGER NOT NULL DEFAULT 1,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    last_login_at TEXT
+  );
+  CREATE TABLE IF NOT EXISTS sessions (
+    token_hash TEXT PRIMARY KEY,
+    user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    created_at TEXT NOT NULL,
+    expires_at TEXT NOT NULL
+  );
+  CREATE TABLE IF NOT EXISTS app_state (
+    id INTEGER PRIMARY KEY CHECK (id = 1),
+    revision INTEGER NOT NULL DEFAULT 0,
+    payload TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    updated_by TEXT
+  );
+  CREATE TABLE IF NOT EXISTS audit_log (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id TEXT,
+    action TEXT NOT NULL,
+    entity_type TEXT,
+    entity_id TEXT,
+    details TEXT,
+    created_at TEXT NOT NULL
+  );
+  CREATE INDEX IF NOT EXISTS idx_audit_created ON audit_log(created_at DESC);
+  CREATE INDEX IF NOT EXISTS idx_sessions_expiry ON sessions(expires_at);
+`);
+
+function now(){ return new Date().toISOString(); }
+function json(value){ return JSON.stringify(value); }
+function parseJson(value, fallback){ try{return JSON.parse(value)}catch(_){return fallback} }
+function passwordHash(password, salt = crypto.randomBytes(16).toString('hex')){
+  return `${salt}:${crypto.scryptSync(String(password), salt, 64).toString('hex')}`;
+}
+function verifyPassword(password, stored){
+  const [salt, expected] = String(stored || '').split(':');
+  if(!salt || !expected) return false;
+  const actual = crypto.scryptSync(String(password), salt, 64);
+  const expectedBuffer = Buffer.from(expected, 'hex');
+  return actual.length === expectedBuffer.length && crypto.timingSafeEqual(actual, expectedBuffer);
+}
+function publicUser(row){
+  return row && {id:row.id, login:row.login, name:row.name, role:row.role, active:!!row.active, createdAt:row.created_at, updatedAt:row.updated_at, lastLoginAt:row.last_login_at};
+}
+function audit(userId, action, entityType = null, entityId = null, details = null){
+  db.prepare('INSERT INTO audit_log(user_id,action,entity_type,entity_id,details,created_at) VALUES(?,?,?,?,?,?)')
+    .run(userId, action, entityType, entityId, details ? json(details) : null, now());
+}
+
+const admin = db.prepare('SELECT id FROM users WHERE login=?').get('Admin1');
+if(!admin){
+  const timestamp = now();
+  const id = crypto.randomUUID();
+  db.prepare('INSERT INTO users(id,login,name,role,password_hash,active,created_at,updated_at) VALUES(?,?,?,?,?,1,?,?)')
+    .run(id, 'Admin1', 'Администратор', 'admin', passwordHash(process.env.BFBS_ADMIN_PASSWORD || 'Admin123'), timestamp, timestamp);
+  audit(id, 'system.admin_seeded', 'user', id);
+}
+if(!db.prepare('SELECT id FROM app_state WHERE id=1').get()){
+  db.prepare('INSERT INTO app_state(id,revision,payload,updated_at) VALUES(1,0,?,?)')
+    .run(json({warehouses:null, workspace:null, wms:{nomenclature:[], boxes:[], transfers:[], revisions:[], tasks:[], movements:[], events:[]}}), now());
+}
+db.prepare('DELETE FROM sessions WHERE expires_at <= ?').run(now());
+
+function send(res, status, payload, headers = {}){
+  const body = payload === null ? '' : json(payload);
+  res.writeHead(status, {'Content-Type':'application/json; charset=utf-8', 'Cache-Control':'no-store', ...headers});
+  res.end(body);
+}
+function readBody(req){
+  return new Promise((resolve, reject)=>{
+    let size = 0;
+    const chunks = [];
+    req.on('data', chunk=>{
+      size += chunk.length;
+      if(size > MAX_BODY){ reject(Object.assign(new Error('Слишком большой запрос.'), {status:413})); req.destroy(); return; }
+      chunks.push(chunk);
+    });
+    req.on('end', ()=>{
+      if(!chunks.length){ resolve({}); return; }
+      try{resolve(JSON.parse(Buffer.concat(chunks).toString('utf8')))}catch(_){reject(Object.assign(new Error('Некорректный JSON.'), {status:400}))}
+    });
+    req.on('error', reject);
+  });
+}
+function bearer(req){
+  const value = req.headers.authorization || '';
+  return value.startsWith('Bearer ') ? value.slice(7).trim() : '';
+}
+function currentUser(req){
+  const token = bearer(req);
+  if(!token) return null;
+  const row = db.prepare(`SELECT u.* FROM sessions s JOIN users u ON u.id=s.user_id
+    WHERE s.token_hash=? AND s.expires_at>? AND u.active=1`).get(crypto.createHash('sha256').update(token).digest('hex'), now());
+  return row || null;
+}
+function requireUser(req, res, roles){
+  const user = currentUser(req);
+  if(!user){send(res, 401, {error:'Требуется авторизация.'});return null}
+  if(roles && !roles.includes(user.role)){send(res, 403, {error:'Недостаточно прав.'});return null}
+  return user;
+}
+function validateUserInput(body, editing = false){
+  const login = String(body.login || '').trim();
+  const name = String(body.name || '').trim();
+  const role = String(body.role || '').trim();
+  const password = String(body.password || '');
+  if(!login || login.length < 3 || login.length > 64) throw Object.assign(new Error('Логин должен содержать от 3 до 64 символов.'), {status:400});
+  if(!/^[\p{L}\p{N}_.@-]+$/u.test(login)) throw Object.assign(new Error('Логин содержит недопустимые символы.'), {status:400});
+  if(!name || name.length > 100) throw Object.assign(new Error('Укажите имя сотрудника.'), {status:400});
+  if(!ROLES.has(role)) throw Object.assign(new Error('Неизвестная роль.'), {status:400});
+  if((!editing || password) && password.length < 8) throw Object.assign(new Error('Пароль должен содержать минимум 8 символов.'), {status:400});
+  return {login, name, role, password};
+}
+
+async function api(req, res, pathname){
+  if(req.method === 'GET' && pathname === '/api/health'){
+    send(res, 200, {ok:true, service:'B-FBS', database:'sqlite', time:now(), wbConfigured:!!process.env.WB_API_TOKEN});
+    return;
+  }
+  if(req.method === 'POST' && pathname === '/api/auth/login'){
+    const body = await readBody(req);
+    const login = String(body.login || '').trim();
+    const user = db.prepare('SELECT * FROM users WHERE login=? COLLATE NOCASE').get(login);
+    if(!user || !user.active || !verifyPassword(body.password, user.password_hash)){
+      audit(user?.id || null, 'auth.login_failed', 'user', user?.id || login);
+      send(res, 401, {error:'Неверный логин или пароль.'});
+      return;
+    }
+    const token = crypto.randomBytes(32).toString('base64url');
+    const timestamp = now();
+    const expiresAt = new Date(Date.now() + SESSION_TTL_MS).toISOString();
+    db.prepare('INSERT INTO sessions(token_hash,user_id,created_at,expires_at) VALUES(?,?,?,?)')
+      .run(crypto.createHash('sha256').update(token).digest('hex'), user.id, timestamp, expiresAt);
+    db.prepare('UPDATE users SET last_login_at=?,updated_at=? WHERE id=?').run(timestamp, timestamp, user.id);
+    audit(user.id, 'auth.login', 'user', user.id);
+    send(res, 200, {token, expiresAt, user:publicUser({...user,last_login_at:timestamp,updated_at:timestamp})});
+    return;
+  }
+  if(req.method === 'GET' && pathname === '/api/auth/session'){
+    const user = requireUser(req, res); if(!user)return;
+    send(res, 200, {user:publicUser(user)}); return;
+  }
+  if(req.method === 'POST' && pathname === '/api/auth/logout'){
+    const user = currentUser(req);
+    const token = bearer(req);
+    if(token) db.prepare('DELETE FROM sessions WHERE token_hash=?').run(crypto.createHash('sha256').update(token).digest('hex'));
+    if(user) audit(user.id, 'auth.logout', 'user', user.id);
+    send(res, 200, {ok:true}); return;
+  }
+
+  if(req.method === 'GET' && pathname === '/api/users'){
+    const user = requireUser(req, res, ['admin']); if(!user)return;
+    const rows = db.prepare('SELECT * FROM users ORDER BY active DESC,name COLLATE NOCASE').all();
+    send(res, 200, {users:rows.map(publicUser)}); return;
+  }
+  if(req.method === 'POST' && pathname === '/api/users'){
+    const actor = requireUser(req, res, ['admin']); if(!actor)return;
+    const input = validateUserInput(await readBody(req));
+    const id = crypto.randomUUID(), timestamp = now();
+    try{
+      db.prepare('INSERT INTO users(id,login,name,role,password_hash,active,created_at,updated_at) VALUES(?,?,?,?,?,1,?,?)')
+        .run(id,input.login,input.name,input.role,passwordHash(input.password),timestamp,timestamp);
+    }catch(error){
+      if(String(error.message).includes('UNIQUE')){send(res,409,{error:'Пользователь с таким логином уже существует.'});return}
+      throw error;
+    }
+    audit(actor.id, 'user.created', 'user', id, {login:input.login,role:input.role});
+    send(res, 201, {user:publicUser(db.prepare('SELECT * FROM users WHERE id=?').get(id))}); return;
+  }
+  const userMatch = pathname.match(/^\/api\/users\/([^/]+)$/);
+  if(userMatch && req.method === 'PATCH'){
+    const actor = requireUser(req, res, ['admin']); if(!actor)return;
+    const existing = db.prepare('SELECT * FROM users WHERE id=?').get(decodeURIComponent(userMatch[1]));
+    if(!existing){send(res,404,{error:'Пользователь не найден.'});return}
+    const body = await readBody(req);
+    const input = validateUserInput({...existing,...body}, true);
+    const active = body.active === undefined ? existing.active : (body.active ? 1 : 0);
+    if(existing.id === actor.id && !active){send(res,400,{error:'Нельзя отключить собственную учетную запись.'});return}
+    try{
+      if(input.password){
+        db.prepare('UPDATE users SET login=?,name=?,role=?,active=?,password_hash=?,updated_at=? WHERE id=?')
+          .run(input.login,input.name,input.role,active,passwordHash(input.password),now(),existing.id);
+      }else{
+        db.prepare('UPDATE users SET login=?,name=?,role=?,active=?,updated_at=? WHERE id=?')
+          .run(input.login,input.name,input.role,active,now(),existing.id);
+      }
+    }catch(error){
+      if(String(error.message).includes('UNIQUE')){send(res,409,{error:'Пользователь с таким логином уже существует.'});return}
+      throw error;
+    }
+    db.prepare('DELETE FROM sessions WHERE user_id=? AND user_id<>?').run(existing.id, actor.id);
+    audit(actor.id, 'user.updated', 'user', existing.id, {role:input.role,active:!!active});
+    send(res, 200, {user:publicUser(db.prepare('SELECT * FROM users WHERE id=?').get(existing.id))}); return;
+  }
+
+  if(req.method === 'GET' && pathname === '/api/state'){
+    const user = requireUser(req, res); if(!user)return;
+    const row = db.prepare('SELECT * FROM app_state WHERE id=1').get();
+    send(res, 200, {revision:row.revision,state:parseJson(row.payload,{}),updatedAt:row.updated_at}); return;
+  }
+  if(req.method === 'PUT' && pathname === '/api/state'){
+    const user = requireUser(req, res); if(!user)return;
+    const body = await readBody(req);
+    if(!body.state || typeof body.state !== 'object' || Array.isArray(body.state)){send(res,400,{error:'Некорректное состояние системы.'});return}
+    const current = db.prepare('SELECT revision FROM app_state WHERE id=1').get();
+    if(Number.isInteger(body.revision) && body.revision !== current.revision){
+      send(res,409,{error:'Данные были изменены другим сотрудником.',revision:current.revision});return;
+    }
+    const revision = current.revision + 1, timestamp = now();
+    db.prepare('UPDATE app_state SET revision=?,payload=?,updated_at=?,updated_by=? WHERE id=1')
+      .run(revision,json(body.state),timestamp,user.id);
+    audit(user.id, 'state.updated', 'state', 'main', {revision});
+    send(res,200,{ok:true,revision,updatedAt:timestamp});return;
+  }
+  if(req.method === 'GET' && pathname === '/api/audit'){
+    const user = requireUser(req, res, ['admin','manager']); if(!user)return;
+    const rows = db.prepare(`SELECT a.*,u.login,u.name FROM audit_log a LEFT JOIN users u ON u.id=a.user_id
+      ORDER BY a.id DESC LIMIT 300`).all();
+    send(res,200,{events:rows.map(row=>({id:row.id,userId:row.user_id,login:row.login,name:row.name,action:row.action,entityType:row.entity_type,entityId:row.entity_id,details:parseJson(row.details,null),createdAt:row.created_at}))});return;
+  }
+  if(req.method === 'GET' && pathname === '/api/export'){
+    const user = requireUser(req, res, ['admin']); if(!user)return;
+    const state = db.prepare('SELECT * FROM app_state WHERE id=1').get();
+    const users = db.prepare('SELECT * FROM users ORDER BY name').all().map(publicUser);
+    audit(user.id, 'system.export', 'state', 'main');
+    send(res,200,{exportedAt:now(),revision:state.revision,state:parseJson(state.payload,{}),users});return;
+  }
+  if(req.method === 'GET' && pathname === '/api/wb/status'){
+    const user = requireUser(req, res, ['admin','manager']); if(!user)return;
+    send(res,200,{configured:!!process.env.WB_API_TOKEN,message:process.env.WB_API_TOKEN?'Ключ задан на сервере.':'Задайте WB_API_TOKEN в окружении сервера.'});return;
+  }
+  if(req.method === 'POST' && pathname === '/api/import/preview'){
+    const user = requireUser(req, res, ['admin','manager']); if(!user)return;
+    const body = await readBody(req);
+    const name = String(body.name || 'import.xlsx');
+    if(!/\.xlsx?$/i.test(name)){send(res,400,{error:'Поддерживаются только файлы Excel XLSX/XLS.'});return}
+    let buffer;
+    try{buffer = Buffer.from(String(body.data || ''), 'base64')}catch(_){send(res,400,{error:'Не удалось прочитать файл.'});return}
+    if(!buffer.length || buffer.length > MAX_BODY){send(res,400,{error:'Файл пуст или слишком большой.'});return}
+    let workbook;
+    try{workbook = XLSX.read(buffer, {type:'buffer', cellDates:false})}catch(_){send(res,400,{error:'Не удалось открыть Excel-файл.'});return}
+    const sheet = workbook.Sheets[workbook.SheetNames[0]];
+    if(!sheet){send(res,400,{error:'В книге нет листов.'});return}
+    const rows = XLSX.utils.sheet_to_json(sheet, {header:1, raw:false, defval:''}).slice(0, 100001);
+    audit(user.id, 'nomenclature.import_preview', 'file', name, {rows:Math.max(0, rows.length - 1)});
+    send(res,200,{rows});return;
+  }
+  send(res,404,{error:'API-метод не найден.'});
+}
+
+const MIME = {'.html':'text/html; charset=utf-8','.css':'text/css; charset=utf-8','.js':'text/javascript; charset=utf-8','.json':'application/json; charset=utf-8','.svg':'image/svg+xml','.png':'image/png','.ico':'image/x-icon'};
+const PUBLIC_FILES = new Set(['index.html','styles.css','editor-fixes.css','workspace-v4.css','workspace-v5.css','workspace-v6.css','wms-final.css','app.js','workspace-hotfix.js','workspace-v4.js','workspace-v5.js','workspace-v6.js','wms-final.js','manifest.webmanifest','sw.js','vendor/qrcode.min.js']);
+function staticFile(req, res, pathname){
+  const requested = pathname === '/' ? 'index.html' : decodeURIComponent(pathname.slice(1));
+  if(!requested || !PUBLIC_FILES.has(requested)){
+    send(res,404,{error:'Файл не найден.'});return;
+  }
+  const file = path.resolve(ROOT, requested);
+  if(!file.startsWith(ROOT + path.sep) && file !== path.join(ROOT,'index.html')){send(res,403,{error:'Доступ запрещён.'});return}
+  let stat;
+  try{stat=fs.statSync(file)}catch(_){send(res,404,{error:'Файл не найден.'});return}
+  if(!stat.isFile()){send(res,404,{error:'Файл не найден.'});return}
+  const type = MIME[path.extname(file).toLowerCase()] || 'application/octet-stream';
+  res.writeHead(200,{
+    'Content-Type':type,
+    'Content-Length':stat.size,
+    'Cache-Control':requested === 'index.html' ? 'no-cache' : 'public, max-age=300',
+    'X-Content-Type-Options':'nosniff',
+    'Referrer-Policy':'same-origin',
+    'Content-Security-Policy':"default-src 'self'; img-src 'self' data:; style-src 'self' 'unsafe-inline'; script-src 'self'; connect-src 'self'"
+  });
+  fs.createReadStream(file).pipe(res);
+}
+
+const server = http.createServer(async (req,res)=>{
+  const requestUrl = new URL(req.url, `http://${req.headers.host || 'localhost'}`);
+  try{
+    if(requestUrl.pathname.startsWith('/api/')) await api(req,res,requestUrl.pathname);
+    else if(req.method === 'GET' || req.method === 'HEAD') staticFile(req,res,requestUrl.pathname);
+    else send(res,405,{error:'Метод не поддерживается.'},{Allow:'GET, HEAD, POST, PUT, PATCH'});
+  }catch(error){
+    console.error(error);
+    if(!res.headersSent) send(res,error.status || 500,{error:error.status ? error.message : 'Внутренняя ошибка сервера.'});
+    else res.end();
+  }
+});
+
+server.listen(PORT, '0.0.0.0', ()=>{
+  console.log(`B-FBS server: http://0.0.0.0:${PORT}`);
+  console.log(`Database: ${DB_PATH}`);
+});

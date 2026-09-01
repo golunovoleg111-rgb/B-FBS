@@ -16,5 +16,9 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: 24
+      - name: Enable pnpm
+        run: corepack enable
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
       - name: Syntax check
-        run: node --check app.js
+        run: pnpm run check

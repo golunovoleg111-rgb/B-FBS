@@ -1,0 +1,18 @@
+{
+  "name": "b-fbs",
+  "version": "1.0.0",
+  "private": true,
+  "description": "B-FBS warehouse management system",
+  "type": "commonjs",
+  "engines": {
+    "node": ">=22.5"
+  },
+  "scripts": {
+    "start": "node server.js",
+    "check": "node --check app.js && node --check workspace-hotfix.js && node --check workspace-v4.js && node --check workspace-v5.js && node --check workspace-v6.js && node --check wms-final.js && node --check server.js && node --check scripts/smoke-test.js",
+    "test:smoke": "node scripts/smoke-test.js"
+  },
+  "dependencies": {
+    "xlsx": "^0.18.5"
+  }
+}
