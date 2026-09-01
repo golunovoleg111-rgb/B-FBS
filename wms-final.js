@@ -549,10 +549,11 @@
       const zone=zones.find(item=>item.id===zoneMoveId);
       if(zone&&!zone.frozen){
         event.preventDefault();closeZoneMenu();const p=floorPoint(event);
-        zoneMoveStart={pointer:p,x:zone.x,y:zone.y};
+        // A press on the edited zone starts as a click candidate. It turns
+        // into a drag only after the pointer actually moves a few pixels.
+        zoneMoveStart={pointer:p,x:zone.x,y:zone.y,clientX:event.clientX,clientY:event.clientY};
         zoneMoveChanged=false;
-        pointerAction='wms-zone-move';
-        event.currentTarget.classList.add('zone-moving');
+        pointerAction='wms-zone-edit-pending';
         event.currentTarget.setPointerCapture(event.pointerId);
         return;
       }
@@ -562,6 +563,13 @@
   };
   window.onPointerMove=function(event){
     if(pointerAction==='wms-zone'){zoneCurrent=snapZonePoint(floorPoint(event));showZonePreview();return}
+    if(pointerAction==='wms-zone-edit-pending'){
+      if(!zoneMoveStart)return;
+      const dx=event.clientX-zoneMoveStart.clientX,dy=event.clientY-zoneMoveStart.clientY;
+      if(Math.hypot(dx,dy)<5)return;
+      pointerAction='wms-zone-move';
+      event.currentTarget.classList.add('zone-moving');
+    }
     if(pointerAction==='wms-zone-move'){
       const zone=zones.find(item=>item.id===zoneMoveId);if(!zone||!zoneMoveStart)return;
       const p=floorPoint(event),next=snapZonePosition(zone,zoneMoveStart.x+(p.x-zoneMoveStart.pointer.x),zoneMoveStart.y+(p.y-zoneMoveStart.pointer.y));
@@ -595,6 +603,16 @@
       pointerAction=null;zoneDraw=false;zoneStart=null;zoneCurrent=null;try{event.currentTarget.releasePointerCapture(event.pointerId)}catch(_){}
       if(!validZone(rect)){toast('Зона должна быть внутри склада, не пересекать другие зоны и иметь размер не менее 1×1 м.','warning');render();return}
       openZoneForm(null,rect);render();return;
+    }
+    if(pointerAction==='wms-zone-edit-pending'){
+      const zone=zones.find(item=>item.id===zoneMoveId);
+      pointerAction=null;try{event.currentTarget.releasePointerCapture(event.pointerId)}catch(_){}
+      zoneMoveStart=null;zoneMoveChanged=false;
+      // Handle the click here rather than waiting for the browser click event:
+      // pointer capture/preventDefault can otherwise swallow that click.
+      suppressZoneClickUntil=Date.now()+250;
+      if(zone)openZoneActionMenu(zone,event);
+      return;
     }
     if(pointerAction==='wms-zone-move'||pointerAction==='wms-zone-resize'){
       const changed=zoneEditDirty;
