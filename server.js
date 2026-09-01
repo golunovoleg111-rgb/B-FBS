@@ -486,15 +486,14 @@ async function api(req, res, pathname){
       if(String(error.message).includes('UNIQUE')){send(res,409,{error:'Пользователь с таким логином уже существует.'});return}
       throw error;
     }
-    db.prepare('DELETE FROM sessions WHERE user_id=? AND user_id<>?').run(existing.id, actor.id);
-    audit(actor.id, 'user.updated', 'user', existing.id, {role:input.role,active:!!active});
+    audit(actor.id, 'user.updated', 'user', existing.id, {role:input.role,active:!!active,permissions});
     send(res, 200, {user:publicUser(db.prepare('SELECT * FROM users WHERE id=?').get(existing.id))}); return;
   }
 
   if(req.method === 'GET' && pathname === '/api/state'){
     const user = requireUser(req, res); if(!user)return;
     const row = db.prepare('SELECT * FROM app_state WHERE id=1').get();
-    send(res, 200, {revision:row.revision,state:parseJson(row.payload,{}),updatedAt:row.updated_at}); return;
+    send(res, 200, {revision:row.revision,state:parseJson(row.payload,{}),updatedAt:row.updated_at,user:publicUser(user)}); return;
   }
   if(req.method === 'PUT' && pathname === '/api/state'){
     const user = requireUser(req, res); if(!user)return;
