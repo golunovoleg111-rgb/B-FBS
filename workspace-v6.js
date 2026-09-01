@@ -7,6 +7,9 @@
   const originalFitView = window.fitView;
   const originalUpdateCanvas = window.updateCanvas;
   const originalPointerMove = window.onPointerMove;
+  const originalPointerUp = window.onPointerUp;
+
+  window.__bfbsPublishedViewportController = 'wall-bounds-v1';
 
   let presentationMode = false;
   let lastPublishedSource = null;
@@ -47,6 +50,34 @@
     return {w:baseWidth / zoomValue, h:baseHeight / zoomValue};
   }
 
+  function publishedDisplayBounds(){
+    const bounds = publishedBounds();
+    if(!bounds) return null;
+    // Small gutter keeps the outer wall stroke fully visible while the walls
+    // remain the hard navigation boundary of the published map.
+    const gutter = 14;
+    return {
+      minX:bounds.minX-gutter,
+      minY:bounds.minY-gutter,
+      maxX:bounds.maxX+gutter,
+      maxY:bounds.maxY+gutter
+    };
+  }
+
+  function publishedFitZoom(){
+    const bounds = publishedDisplayBounds();
+    if(!bounds) return 1;
+    const stage = stageElement();
+    const rect = stage?.getBoundingClientRect();
+    const pixelWidth = Math.max(1, rect?.width || VIEW.w);
+    const pixelHeight = Math.max(1, rect?.height || VIEW.h);
+    const baseWidth = VIEW.w;
+    const baseHeight = baseWidth * pixelHeight / pixelWidth;
+    const width = Math.max(1,bounds.maxX-bounds.minX);
+    const height = Math.max(1,bounds.maxY-bounds.minY);
+    return Math.max(ZOOM.min,Math.min(ZOOM.max,Math.min(baseWidth/width,baseHeight/height)));
+  }
+
   function updateZoomReadout(){
     const value = `${Math.round(view.zoom * 100)}%`;
     const status = document.querySelector('.editor-status');
@@ -66,7 +97,7 @@
   }
 
   function clampPublishedPan(){
-    const bounds = publishedBounds();
+    const bounds = publishedDisplayBounds();
     if(!bounds){
       view.panX = 0;
       view.panY = 0;
@@ -75,6 +106,10 @@
     const viewport = publishedViewport();
     const width = bounds.maxX - bounds.minX;
     const height = bounds.maxY - bounds.minY;
+
+    // At fit scale an axis may be wider than the warehouse because the screen
+    // aspect ratio differs from the wall rectangle. That axis stays centered.
+    // Once zoomed in, panning is free until the outer walls reach the viewport.
     view.panX = viewport.w >= width
       ? bounds.minX - (viewport.w - width) / 2
       : Math.max(bounds.minX, Math.min(bounds.maxX - viewport.w, view.panX));
@@ -103,8 +138,9 @@
   window.setZoom = function(nextZoom, anchor){
     if(!isPublished()) return originalSetZoom(nextZoom, anchor);
     const oldZoom = view.zoom;
-    const normalized = Math.max(ZOOM.min, Math.min(ZOOM.max, Math.round(nextZoom * 10) / 10));
-    if(normalized === oldZoom) return;
+    const minZoom = publishedFitZoom();
+    const normalized = Math.max(minZoom, Math.min(ZOOM.max, Math.round(nextZoom * 10) / 10));
+    if(Math.abs(normalized-oldZoom)<0.0001) return;
 
     const oldViewport = publishedViewport(oldZoom);
     const focus = anchor || {
@@ -120,11 +156,12 @@
     view.panY = focus.y - ratioY * nextViewport.h;
     clampPublishedPan();
     syncPublishedCanvas();
+    persist();
   };
 
   window.fitView = function(){
     if(!isPublished()) return originalFitView();
-    const bounds = publishedBounds();
+    const bounds = publishedDisplayBounds();
     if(!bounds){
       view.zoom = 1;
       view.panX = 0;
@@ -133,24 +170,15 @@
       return;
     }
 
-    const stage = stageElement();
-    const rect = stage?.getBoundingClientRect();
-    const pixelWidth = Math.max(1, rect?.width || VIEW.w);
-    const pixelHeight = Math.max(1, rect?.height || VIEW.h);
-    const baseWidth = VIEW.w;
-    const baseHeight = baseWidth * pixelHeight / pixelWidth;
-    const width = Math.max(1, bounds.maxX - bounds.minX);
-    const height = Math.max(1, bounds.maxY - bounds.minY);
-    const padding = 40;
-
-    view.zoom = Math.max(ZOOM.min, Math.min(ZOOM.max,
-      Math.min(baseWidth / (width + padding), baseHeight / (height + padding))
-    ));
+    view.zoom = publishedFitZoom();
     const viewport = publishedViewport();
+    const width = bounds.maxX - bounds.minX;
+    const height = bounds.maxY - bounds.minY;
     view.panX = bounds.minX - (viewport.w - width) / 2;
     view.panY = bounds.minY - (viewport.h - height) / 2;
     clampPublishedPan();
     syncPublishedCanvas();
+    persist();
   };
 
   window.updateCanvas = function(){
@@ -167,6 +195,17 @@
     view.panX = dragStart.panX - (event.clientX - dragStart.x) / rect.width * viewport.w;
     view.panY = dragStart.panY - (event.clientY - dragStart.y) / rect.height * viewport.h;
     clampPublishedPan();
+    syncPublishedCanvas();
+  };
+
+  window.onPointerUp = function(event){
+    if(!isPublished() || pointerAction !== 'pan') return originalPointerUp(event);
+    pointerAction = null;
+    event.currentTarget.classList.remove('panning');
+    try{ event.currentTarget.releasePointerCapture(event.pointerId); }catch(_){}
+    // Do not re-render the whole application after a camera drag. A full
+    // render used to run the legacy clamp and visually "snap" the warehouse.
+    persist();
     syncPublishedCanvas();
   };
 
@@ -257,10 +296,13 @@
     if(publishedMode){
       requestAnimationFrame(function(){
         const needsFit=!!window.__bfbsWorkspaceNeedsFit;
+        const minZoom=publishedFitZoom();
         if(sourceChanged && !presentationMode && needsFit){
           window.__bfbsWorkspaceNeedsFit=false;
           window.fitView();
         }else{
+          if(view.zoom<minZoom)view.zoom=minZoom;
+          clampPublishedPan();
           syncPublishedCanvas();
         }
       });
