@@ -932,3 +932,27 @@ select.ui-native-select{
   .inventory-warehouse-bar{grid-template-columns:1fr}
   .zone-action-menu{width:min(190px,calc(100vw - 16px))}
 }
+
+
+/* PR#30 — explicit zone edit session */
+.zone-action-menu .zone-action-save{
+  background:linear-gradient(180deg,#6675ef,#5968e8)!important;
+  color:#fff!important;font-weight:740!important;
+}
+.zone-action-menu .zone-action-save:hover{
+  background:linear-gradient(180deg,#7180f5,#5060df)!important;
+  color:#fff!important;
+}
+.wms-zone.move-enabled .zone-body{cursor:move!important}
+.wms-zone.move-enabled .box-dot{pointer-events:none!important;opacity:.48}
+.zone-edit-handles{pointer-events:all}
+.zone-edit-handle{
+  fill:#fff!important;stroke:#5363e5!important;stroke-width:2!important;
+  vector-effect:non-scaling-stroke;
+  filter:drop-shadow(0 2px 3px rgba(20,27,45,.14));
+}
+.zone-edit-handle:hover{fill:#eef0ff!important;stroke:#3546cf!important}
+.zone-edit-handle.nw,.zone-edit-handle.se{cursor:nwse-resize}
+.zone-edit-handle.ne,.zone-edit-handle.sw{cursor:nesw-resize}
+.editor-stage.zone-resizing{cursor:default!important}
+.zone-side-edit{min-width:82px!important}
