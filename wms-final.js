@@ -287,6 +287,13 @@
   }
   window.onPointerDown=function(event){
     if(workspaceMode==='management'&&zoneDraw&&event.button===0){event.preventDefault();zoneStart=floorPoint(event);zoneCurrent={...zoneStart};pointerAction='wms-zone';event.currentTarget.setPointerCapture(event.pointerId);showZonePreview();return}
+    // In the published/management view the legacy editor treats every left
+    // pointerdown as camera pan. Do not start pan when the user presses an
+    // interactive WMS entity; allow the following click event to open it.
+    if(workspaceMode==='management'&&event.button===0&&event.target.closest?.('[data-zone-id],[data-box-id]')){
+      pointerAction=null;
+      return;
+    }
     return originalPointerDown(event);
   };
   window.onPointerMove=function(event){if(pointerAction==='wms-zone'){zoneCurrent=floorPoint(event);showZonePreview();return}return originalPointerMove(event)};
