@@ -38,3 +38,4 @@ jobs:
           curl -fsS http://127.0.0.1:8080/api/health
           pnpm run test:smoke
           pnpm run test:shared
+          pnpm run test:permissions
