@@ -973,13 +973,237 @@
   function bindRevisions(){if(document.getElementById('revisions-list'))renderRevisions();document.getElementById('generate-revisions')?.addEventListener('click',()=>{let added=0;wms.boxes.slice().sort((a,b)=>revisionScore(b)-revisionScore(a)).slice(0,20).forEach(box=>{if(wms.revisions.some(item=>item.boxId===box.id&&item.status!=='done'))return;const score=revisionScore(box);wms.revisions.push({id:uid('REV'),boxId:box.id,warehouseId:box.warehouseId,zoneId:box.zoneId,status:'queued',score,priority:score>=50?'Высокий':score>=25?'Средний':'Обычный',createdAt:new Date().toISOString()});added++});saveWms(`Сформировано заданий ревизии: ${added}`);toast(`Создано заданий: ${added}`,'success');renderRevisions()})}
   function openRevision(id){const revision=wms.revisions.find(item=>item.id===id),box=wms.boxes.find(item=>item.id===revision?.boxId);if(!revision||!box)return;openModal(`Ревизия ${box.id}`,`<form class="wms-form" id="revision-form"><label>QR коробки<input name="qrCode" autocomplete="off" placeholder="${esc(box.qrCode)}" required></label><p>После подтверждения коробки укажите фактическое количество.</p>${(box.items||[]).map((item,index)=>`<label>${esc(item.article)} · ${esc(item.size)} · ${esc(item.barcode)}<input name="qty-${index}" type="number" min="0" value="${Number(item.quantity||0)}"></label>`).join('')||empty('Коробка пуста')}<label>Комментарий<textarea name="note" rows="3"></textarea></label><div class="form-error"></div><div class="modal-actions"><button type="button" class="btn" data-close>Отмена</button><button class="btn primary">Завершить проверку</button></div></form>`,(modal,close)=>{modal.querySelector('form').onsubmit=event=>{event.preventDefault();const form=event.currentTarget;if(![box.id,box.qrCode].includes(form.elements.qrCode.value.trim())){form.querySelector('.form-error').innerHTML='<div class="error">QR-код не соответствует коробке задания.</div>';return}(box.items||[]).forEach((item,index)=>{const actual=Math.max(0,Number(form.elements[`qty-${index}`].value)||0),difference=actual-Number(item.quantity||0);if(difference)recordMovement('revision_adjustment',difference,box,item,form.elements.note.value);item.quantity=actual});box.updatedAt=new Date().toISOString();revision.status='done';revision.completedAt=new Date().toISOString();revision.completedBy=currentUser?.name||'';revision.note=form.elements.note.value;saveWms(`Завершена ревизия ${box.id}`);close();renderRevisions()}})}
 
-  function tasksView(){return `<section class="wms-page"><div class="wms-page-head"><div><h2>Сборочные задания</h2><p>Сначала сканируется QR коробки, затем штрихкод товара.</p></div>${['admin','manager'].includes(currentUser?.role)?'<button class="btn primary" id="add-task">+ Создать задание</button>':''}</div><div id="tasks-list" class="operation-list"></div></section>`}
+  function tasksView(){
+    const canCreate=['admin','manager'].includes(currentUser?.role);
+    const active=wms.tasks.filter(task=>!['ready','done','cancelled'].includes(task.status)).length;
+    return `<section class="wms-page">
+      <div class="wms-page-head">
+        <div><h2>Сборочные задания</h2><p>Сначала QR коробки, затем штрихкод товара. Для сборщиков доступен отдельный Scanner Mode.</p></div>
+        <div class="wms-actions">
+          <button class="btn scanner-launch" id="scanner-mode" ${active?'':'disabled'}>Scanner Mode${active?` · ${active}`:''}</button>
+          ${canCreate?'<button class="btn primary" id="add-task">+ Создать задание</button>':''}
+        </div>
+      </div>
+      <div id="tasks-list" class="operation-list"></div>
+    </section>`;
+  }
   function taskProgress(task){const required=(task.lines||[]).reduce((sum,line)=>sum+Number(line.required||0),0),picked=(task.lines||[]).reduce((sum,line)=>sum+Number(line.picked||0),0);return {required,picked}}
-  function renderTasks(){const host=document.getElementById('tasks-list');if(!host)return;host.innerHTML=wms.tasks.length?wms.tasks.map(task=>{const progress=taskProgress(task),line=task.lines?.[0]||{};return `<article class="operation-card"><div><span class="status-pill ${task.status==='ready'||task.status==='done'?'ok':''}">${esc(statusLabel(task.status))}</span><h3>${esc(task.number||task.id)}</h3><p>${esc(line.article||'')} · ${esc(line.size||'')} · ${progress.picked}/${progress.required} ед.</p><small>${esc(line.barcode||'')} · ${dateText(task.createdAt)}</small></div><div class="operation-actions">${!['ready','done','cancelled'].includes(task.status)?'<button class="btn primary" data-task-work="'+esc(task.id)+'">Собирать</button>':''}${task.status==='ready'?'<button class="btn primary" data-task-done="'+esc(task.id)+'">Завершить</button>':''}</div></article>`}).join(''):empty('Сборочных заданий пока нет.');host.querySelectorAll('[data-task-work]').forEach(button=>button.onclick=()=>openTaskScanner(button.dataset.taskWork));host.querySelectorAll('[data-task-done]').forEach(button=>button.onclick=()=>{const task=wms.tasks.find(item=>item.id===button.dataset.taskDone);task.status='done';task.completedAt=new Date().toISOString();saveWms(`Завершено задание ${task.number}`);renderTasks()})}
-  function bindTasks(){if(document.getElementById('tasks-list'))renderTasks();document.getElementById('add-task')?.addEventListener('click',openTaskForm)}
+  function renderTasks(){
+    const host=document.getElementById('tasks-list');if(!host)return;
+    host.innerHTML=wms.tasks.length?wms.tasks.map(task=>{
+      const progress=taskProgress(task),line=task.lines?.[0]||{},percent=progress.required?Math.min(100,Math.round(progress.picked/progress.required*100)):0;
+      return `<article class="operation-card">
+        <div>
+          <span class="status-pill ${task.status==='ready'||task.status==='done'?'ok':''}">${esc(statusLabel(task.status))}</span>
+          <h3>${esc(task.number||task.id)}</h3>
+          <p>${esc(line.article||'')} · ${esc(line.size||'')} · ${progress.picked}/${progress.required} ед.</p>
+          <small>${esc(line.barcode||'')} · ${dateText(task.createdAt)}</small>
+          <div class="task-progress-mini"><span style="width:${percent}%"></span></div>
+        </div>
+        <div class="operation-actions">
+          ${!['ready','done','cancelled'].includes(task.status)?'<button class="btn primary" data-task-work="'+esc(task.id)+'">Собирать</button>':''}
+          ${task.status==='ready'?'<button class="btn primary" data-task-done="'+esc(task.id)+'">Завершить</button>':''}
+        </div>
+      </article>`;
+    }).join(''):empty('Сборочных заданий пока нет.');
+    host.querySelectorAll('[data-task-work]').forEach(button=>button.onclick=()=>openTaskScanner(button.dataset.taskWork));
+    host.querySelectorAll('[data-task-done]').forEach(button=>button.onclick=()=>{
+      const task=wms.tasks.find(item=>item.id===button.dataset.taskDone);if(!task)return;
+      task.status='done';task.completedAt=new Date().toISOString();
+      saveWms(`Завершено задание ${task.number}`);renderTasks();
+    });
+  }
+  function bindTasks(){
+    if(document.getElementById('tasks-list'))renderTasks();
+    document.getElementById('add-task')?.addEventListener('click',openTaskForm);
+    document.getElementById('scanner-mode')?.addEventListener('click',openScannerTaskChoice);
+  }
+  function openScannerTaskChoice(){
+    const active=wms.tasks.filter(task=>!['ready','done','cancelled'].includes(task.status));
+    if(!active.length){toast('Нет заданий, доступных для сборки.','info');return}
+    if(active.length===1){openTaskScanner(active[0].id);return}
+    openModal('Scanner Mode',`<div class="scanner-task-choice">
+      <p>Выберите задание. После открытия интерфейс переключится в крупный режим для сканера.</p>
+      <div class="scanner-task-list">${active.map(task=>{
+        const p=taskProgress(task),line=task.lines?.[0]||{};
+        return `<button type="button" data-scanner-task="${esc(task.id)}"><span><b>${esc(task.number||task.id)}</b><small>${esc(line.article||'')} · ${esc(line.size||'')}</small></span><strong>${p.picked}/${p.required}</strong></button>`;
+      }).join('')}</div>
+      <div class="modal-actions"><button type="button" class="btn" data-close>Отмена</button></div>
+    </div>`,(modal,close)=>{
+      modal.querySelectorAll('[data-scanner-task]').forEach(button=>button.onclick=()=>{const id=button.dataset.scannerTask;close();openTaskScanner(id)});
+    });
+  }
   function openTaskForm(){if(!wms.nomenclature.length){toast('Сначала загрузите номенклатуру.','warning');return}openModal('Новое сборочное задание',`<form class="wms-form" id="task-form"><label>Товар<select name="barcode">${skuOptions()}</select></label><label>Количество<input name="quantity" type="number" min="1" value="1" required></label><label>Номер заказа / поставки<input name="number" value="${esc(`FBS-${Date.now().toString().slice(-6)}`)}"></label><div class="form-error"></div><div class="modal-actions"><button type="button" class="btn" data-close>Отмена</button><button class="btn primary">Создать</button></div></form>`,(modal,close)=>{modal.querySelector('form').onsubmit=event=>{event.preventDefault();const data=Object.fromEntries(new FormData(event.currentTarget)),sku=itemByBarcode(data.barcode),quantity=Number(data.quantity),stock=wms.boxes.reduce((sum,box)=>sum+Number(box.items.find(item=>item.barcode===data.barcode)?.quantity||0),0);if(!sku||quantity<1||quantity>stock){event.currentTarget.querySelector('.form-error').innerHTML=`<div class="error">Доступный остаток: ${stock} ед.</div>`;return}wms.tasks.unshift({id:uid('TASK'),number:data.number.trim(),status:'queued',lines:[{article:sku.article,barcode:sku.barcode,size:sku.size,required:quantity,picked:0}],createdAt:new Date().toISOString(),createdBy:currentUser?.name||''});saveWms(`Создано сборочное задание ${data.number}`);close();renderTasks()}})}
   function suggestedBoxes(barcode){return wms.boxes.filter(box=>!box.locked&&Number(box.items.find(item=>item.barcode===barcode)?.quantity||0)>0).sort((a,b)=>Number(a.items.find(item=>item.barcode===barcode)?.quantity||0)-Number(b.items.find(item=>item.barcode===barcode)?.quantity||0))}
-  function openTaskScanner(id){const task=wms.tasks.find(item=>item.id===id),line=task?.lines?.[0];if(!task||!line)return;task.status='working';const boxes=suggestedBoxes(line.barcode);openModal(`Сборка ${task.number}`,`<div class="scan-panel"><div class="scan-route">${boxes.map(box=>`<span>${esc(findZone(box.warehouseId,box.zoneId)?.name||box.zoneId)} → ${esc(box.id)} (${Number(box.items.find(item=>item.barcode===line.barcode)?.quantity||0)} ед.)</span>`).join('')||'Подходящих коробок нет'}</div><label>Сканер / ввод<input id="task-scan" autocomplete="off" autofocus placeholder="QR коробки"></label><div id="task-scan-status">Сначала отсканируйте QR коробки</div><div class="modal-actions"><button class="btn" data-close>Закрыть</button></div></div>`,(modal,close)=>{let activeBox=null;const input=modal.querySelector('#task-scan'),status=modal.querySelector('#task-scan-status');const scan=()=>{const value=input.value.trim();input.value='';if(!value)return;if(!activeBox){const candidate=boxByQr(value);if(!candidate||!candidate.items.some(item=>item.barcode===line.barcode&&Number(item.quantity)>0)){status.innerHTML='<span class="error-text">В этой коробке нет нужного товара.</span>';return}activeBox=candidate;status.innerHTML=`Коробка <b>${esc(candidate.id)}</b> подтверждена. Сканируйте товар ${esc(line.barcode)}.`;input.placeholder='Штрихкод товара';return}if(value!==line.barcode){status.innerHTML='<span class="error-text">Штрихкод не соответствует заданию.</span>';return}const stock=activeBox.items.find(item=>item.barcode===line.barcode),progress=taskProgress(task);if(progress.picked>=progress.required){status.textContent='Задание уже собрано.';return}if(!stock||Number(stock.quantity)<=0){activeBox=null;status.textContent='Коробка пуста. Отсканируйте следующую коробку.';input.placeholder='QR коробки';return}stock.quantity-=1;line.picked+=1;activeBox.updatedAt=new Date().toISOString();recordMovement('picking',-1,activeBox,stock,task.number);if(line.picked>=line.required){task.status='ready';task.readyAt=new Date().toISOString();saveWms(`Задание ${task.number} собрано`);status.innerHTML='<b>Задание собрано и готово к отгрузке.</b>';setTimeout(()=>{close();renderTasks()},800);return}saveWms();status.innerHTML=`Собрано <b>${line.picked}/${line.required}</b>. Продолжайте сканирование.`};input.addEventListener('keydown',event=>{if(event.key==='Enter'){event.preventDefault();scan()}});input.focus()})}
+  function scannerBeep(kind='ok'){
+    try{
+      const AudioCtx=window.AudioContext||window.webkitAudioContext;if(!AudioCtx)return;
+      const ctx=new AudioCtx(),osc=ctx.createOscillator(),gain=ctx.createGain();
+      osc.type='sine';osc.frequency.value=kind==='error'?180:kind==='warn'?330:kind==='done'?720:520;
+      gain.gain.setValueAtTime(.0001,ctx.currentTime);
+      gain.gain.exponentialRampToValueAtTime(.08,ctx.currentTime+.01);
+      gain.gain.exponentialRampToValueAtTime(.0001,ctx.currentTime+(kind==='done'?.24:.12));
+      osc.connect(gain);gain.connect(ctx.destination);osc.start();osc.stop(ctx.currentTime+(kind==='done'?.25:.13));
+      osc.onended=()=>ctx.close().catch(()=>{});
+    }catch(_){}
+  }
+  function openTaskScanner(id){
+    const task=wms.tasks.find(item=>item.id===id),line=task?.lines?.[0];
+    if(!task||!line)return;
+    if(['ready','done','cancelled'].includes(task.status)){toast('Это задание уже недоступно для сборки.','warning');return}
+
+    task.status='working';task.startedAt=task.startedAt||new Date().toISOString();saveWms();
+
+    const node=document.createElement('section');
+    node.className='scanner-screen';
+    node.innerHTML=`<header class="scanner-top">
+      <div><span>SCANNER MODE</span><h2>${esc(task.number||task.id)}</h2></div>
+      <button type="button" class="scanner-close" aria-label="Закрыть">×</button>
+    </header>
+    <main class="scanner-main">
+      <div class="scanner-product">
+        <div><span>Товар</span><b>${esc(line.article)}</b><small>Размер ${esc(line.size)} · ШК ${esc(line.barcode)}</small></div>
+        <div class="scanner-counter"><strong id="scanner-picked">${Number(line.picked||0)}</strong><span>/ ${Number(line.required||0)}</span></div>
+      </div>
+      <div class="scanner-progress"><span id="scanner-progress-bar"></span></div>
+
+      <div class="scanner-state waiting" id="scanner-state">
+        <div class="scanner-state-icon" id="scanner-state-icon">□</div>
+        <div><span id="scanner-state-label">ШАГ 1</span><h3 id="scanner-state-title">Отсканируйте QR коробки</h3><p id="scanner-state-note">Система проверит, что в коробке есть нужный товар.</p></div>
+      </div>
+
+      <div class="scanner-active-box" id="scanner-active-box" hidden></div>
+
+      <label class="scanner-input-wrap">
+        <span>Сканер / ручной ввод</span>
+        <input id="task-scan" autocomplete="off" inputmode="none" placeholder="QR коробки">
+      </label>
+
+      <div class="scanner-route-block">
+        <div class="scanner-route-head"><b>Подходящие коробки</b><small>Остаток обновляется после каждого скана</small></div>
+        <div class="scanner-route" id="scanner-route"></div>
+      </div>
+    </main>
+    <footer class="scanner-footer"><span>Enter — принять скан · Esc — выйти</span><button type="button" class="btn" id="scanner-refocus">Вернуть фокус сканеру</button></footer>`;
+
+    document.body.appendChild(node);document.body.classList.add('scanner-mode-active');
+
+    let activeBox=null,finished=false;
+    const input=node.querySelector('#task-scan'),state=node.querySelector('#scanner-state'),stateIcon=node.querySelector('#scanner-state-icon'),
+      stateLabel=node.querySelector('#scanner-state-label'),stateTitle=node.querySelector('#scanner-state-title'),stateNote=node.querySelector('#scanner-state-note'),
+      activeBoxHost=node.querySelector('#scanner-active-box'),pickedHost=node.querySelector('#scanner-picked'),progressBar=node.querySelector('#scanner-progress-bar'),
+      routeHost=node.querySelector('#scanner-route');
+
+    const progress=()=>{
+      const picked=Number(line.picked||0),required=Math.max(1,Number(line.required||0));
+      pickedHost.textContent=picked;progressBar.style.width=`${Math.min(100,picked/required*100)}%`;
+    };
+    const renderRoute=()=>{
+      const boxes=suggestedBoxes(line.barcode);
+      routeHost.innerHTML=boxes.length?boxes.map(box=>{
+        const qty=Number(box.items.find(item=>item.barcode===line.barcode)?.quantity||0);
+        return `<div class="scanner-route-item ${activeBox?.id===box.id?'active':''}"><span>${esc(findZone(box.warehouseId,box.zoneId)?.name||box.zoneId||'Зона')}</span><b>${esc(box.id)}</b><strong>${qty} ед.</strong></div>`;
+      }).join(''):'<div class="scanner-route-empty">Подходящих коробок с остатком больше нет.</div>';
+    };
+    const setState=(kind,title,note,label='СКАНЕР')=>{
+      state.className=`scanner-state ${kind}`;
+      stateIcon.textContent=kind==='success'?'✓':kind==='error'?'!':kind==='warning'?'↺':kind==='done'?'✓':'□';
+      stateLabel.textContent=label;stateTitle.textContent=title;stateNote.textContent=note||'';
+    };
+    const showBox=()=>{
+      if(!activeBox){activeBoxHost.hidden=true;activeBoxHost.innerHTML='';return}
+      const stock=activeBox.items.find(item=>item.barcode===line.barcode),zone=findZone(activeBox.warehouseId,activeBox.zoneId);
+      activeBoxHost.hidden=false;
+      activeBoxHost.innerHTML=`<div><span>Активная коробка</span><b>${esc(activeBox.id)}</b><small>${esc(warehouseName(activeBox.warehouseId))} · ${esc(zone?.name||activeBox.zoneId)}</small></div><strong>${Number(stock?.quantity||0)} ед.</strong>`;
+    };
+    const refocus=()=>{if(!finished){input.focus();input.select?.()}};
+    const close=()=>{
+      node.remove();document.body.classList.remove('scanner-mode-active');document.removeEventListener('keydown',escapeHandler,true);
+      renderTasks();
+    };
+    const acceptBox=candidate=>{
+      const stock=candidate?.items?.find(item=>item.barcode===line.barcode);
+      if(!candidate||candidate.locked||findZone(candidate.warehouseId,candidate.zoneId)?.locked||!stock||Number(stock.quantity)<=0)return false;
+      activeBox=candidate;showBox();renderRoute();
+      setState('success',`Коробка ${candidate.id} подтверждена`,`Теперь сканируйте ШК товара ${line.barcode}.`,'ШАГ 2');
+      input.placeholder='Штрихкод товара';scannerBeep('ok');return true;
+    };
+    const finishTask=()=>{
+      finished=true;task.status='ready';task.readyAt=new Date().toISOString();
+      saveWms(`Задание ${task.number} собрано`);
+      progress();showBox();renderRoute();
+      setState('done','Задание собрано','Нужное количество подтверждено. Задание готово к отгрузке.','ГОТОВО');
+      input.disabled=true;node.classList.add('scanner-complete');scannerBeep('done');
+    };
+    const scan=()=>{
+      const value=input.value.trim();input.value='';if(!value||finished)return;
+      const currentProgress=taskProgress(task);
+      if(currentProgress.picked>=currentProgress.required){finishTask();return}
+
+      if(!activeBox){
+        if(value===line.barcode){
+          setState('warning','Сначала нужна коробка','Отсканируйте QR коробки, из которой берете товар.','НЕВЕРНЫЙ ПОРЯДОК');
+          scannerBeep('warn');refocus();return;
+        }
+        const candidate=boxByQr(value);
+        if(!candidate){
+          setState('error','QR коробки не распознан','Проверьте код и повторите сканирование.','ОШИБКА');
+          scannerBeep('error');refocus();return;
+        }
+        if(!acceptBox(candidate)){
+          setState('error','В этой коробке нет нужного товара','Выберите коробку из списка подходящих ниже.','НЕВЕРНАЯ КОРОБКА');
+          scannerBeep('error');refocus();return;
+        }
+        refocus();return;
+      }
+
+      const scannedBox=boxByQr(value);
+      if(scannedBox){
+        if(acceptBox(scannedBox)){refocus();return}
+        setState('error','Эта коробка не подходит','В ней нет доступного остатка нужного ШК.','НЕВЕРНАЯ КОРОБКА');
+        scannerBeep('error');refocus();return;
+      }
+
+      if(value!==line.barcode){
+        const otherSku=itemByBarcode(value);
+        setState('error','Неверный товар',otherSku?`${otherSku.article} · размер ${otherSku.size} не входит в текущую строку задания.`:'Штрихкод не соответствует текущему заданию.','ОШИБКА');
+        scannerBeep('error');refocus();return;
+      }
+
+      const stock=activeBox.items.find(item=>item.barcode===line.barcode);
+      if(!stock||Number(stock.quantity)<=0){
+        activeBox=null;showBox();renderRoute();
+        setState('warning','Коробка закончилась','Отсканируйте QR следующей коробки.','СМЕНА КОРОБКИ');
+        input.placeholder='QR коробки';scannerBeep('warn');refocus();return;
+      }
+
+      stock.quantity-=1;line.picked=Number(line.picked||0)+1;activeBox.updatedAt=new Date().toISOString();
+      recordMovement('picking',-1,activeBox,stock,task.number);
+      progress();showBox();renderRoute();
+
+      if(Number(line.picked)>=Number(line.required)){finishTask();return}
+
+      if(Number(stock.quantity)<=0){
+        activeBox=null;showBox();
+        setState('warning',`Принято · ${line.picked}/${line.required}`,'Коробка закончилась. Отсканируйте следующую коробку.','ПРИНЯТО');
+        input.placeholder='QR коробки';scannerBeep('ok');
+      }else{
+        saveWms();
+        setState('success',`Принято · ${line.picked}/${line.required}`,'Продолжайте сканировать этот товар.','ПРИНЯТО');
+        scannerBeep('ok');
+      }
+      refocus();
+    };
+    const escapeHandler=event=>{if(event.key==='Escape'){event.preventDefault();close()}};
+
+    input.addEventListener('keydown',event=>{if(event.key==='Enter'){event.preventDefault();scan()}});
+    node.querySelector('.scanner-close').onclick=close;
+    node.querySelector('#scanner-refocus').onclick=refocus;
+    node.addEventListener('pointerdown',event=>{if(!event.target.closest('button,input'))setTimeout(refocus,0)});
+    document.addEventListener('keydown',escapeHandler,true);
+
+    progress();renderRoute();refocus();
+  }
 
   function nextBoxId(){let max=0;wms.boxes.forEach(box=>{const match=String(box.id).match(/BOX-(\d+)/);if(match)max=Math.max(max,Number(match[1]))});return `BOX-${String(max+1).padStart(4,'0')}`}
   function openBoxForm(box,defaultZoneId){
