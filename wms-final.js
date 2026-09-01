@@ -390,7 +390,7 @@
     return zones.map((zone,zoneIndex)=>{
       const boxes=wms.boxes.filter(box=>box.warehouseId===warehouseId&&box.zoneId===zone.id);
       const count=boxes.length;
-      const edit=zone.w>=90&&zone.h>=55?`<g class="zone-map-edit" data-edit-zone-map="${esc(zone.id)}" transform="translate(${zone.x+zone.w-34} ${zone.y+8})"><rect width="26" height="22" rx="6"/><text x="13" y="15" text-anchor="middle">✎</text></g>`:'';
+      const edit='';
       const markersAllowed=zone.w>=76&&zone.h>=72;
       const markers=markersAllowed?boxes.slice(0,18).map((box,index)=>{const col=index%6,row=Math.floor(index/6);return `<circle class="box-dot" data-box-id="${esc(box.id)}" cx="${zone.x+18+col*18}" cy="${zone.y+zone.h-16-row*18}" r="6"><title>${esc(box.id)} · ${boxQuantity(box)} ед.</title></circle>`}).join(''):'';
       return `<g class="wms-zone ${zone.locked?'locked':''} ${zone.frozen?'frozen':''} ${zoneMoveId===zone.id?'move-enabled':''}" data-zone-id="${esc(zone.id)}"><rect class="zone-body" x="${zone.x}" y="${zone.y}" width="${zone.w}" height="${zone.h}" rx="8"/><title>${esc(zone.name)} · ${count} кор. · лимит ${Number(zone.capacity||0)||'∞'}</title>${zoneLabelSvg(zone,count,zoneIndex)}${edit}${markers}</g>`;
@@ -496,7 +496,11 @@
       const zone=zones.find(item=>item.id===zoneMoveId);if(!zone||!zoneMoveStart)return;
       const p=floorPoint(event),next=snapZonePosition(zone,zoneMoveStart.x+(p.x-zoneMoveStart.pointer.x),zoneMoveStart.y+(p.y-zoneMoveStart.pointer.y));
       const candidate={x:next.x,y:next.y,w:zone.w,h:zone.h};
-      if(validZone(candidate,zone.id)){zone.x=next.x;zone.y=next.y;zoneMoveChanged=true;updateCanvas()}
+      if(validZone(candidate,zone.id)){
+        zone.x=next.x;zone.y=next.y;zoneMoveChanged=true;
+        const node=[...document.querySelectorAll('[data-zone-id]')].find(item=>item.dataset.zoneId===zone.id);
+        if(node)node.setAttribute('transform',`translate(${zone.x-zoneMoveStart.x} ${zone.y-zoneMoveStart.y})`);
+      }
       return;
     }
     return originalPointerMove(event)
@@ -512,7 +516,7 @@
       const zone=zones.find(item=>item.id===zoneMoveId);
       pointerAction=null;event.currentTarget.classList.remove('zone-moving');try{event.currentTarget.releasePointerCapture(event.pointerId)}catch(_){}
       if(zoneMoveChanged&&zone){persist();saveWms(`Перемещена зона ${zone.name}`);suppressZoneClickUntil=Date.now()+250}
-      zoneMoveStart=null;zoneMoveChanged=false;updateCanvas();return;
+      zoneMoveStart=null;zoneMoveChanged=false;render();return;
     }
     return originalPointerUp(event);
   };
