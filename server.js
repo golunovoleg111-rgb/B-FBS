@@ -154,6 +154,46 @@ function validateUserInput(body, editing = false){
   return {login, name, role, password};
 }
 
+function normalizeImportedState(value){
+  if(!value || typeof value !== 'object' || Array.isArray(value)){
+    throw Object.assign(new Error('Резервная копия не содержит состояние B-FBS.'), {status:400});
+  }
+  const warehouses = value.warehouses == null ? null : value.warehouses;
+  if(warehouses !== null && !Array.isArray(warehouses)){
+    throw Object.assign(new Error('Некорректный список складов в резервной копии.'), {status:400});
+  }
+  const workspace = value.workspace == null ? null : value.workspace;
+  if(workspace !== null && (typeof workspace !== 'object' || Array.isArray(workspace))){
+    throw Object.assign(new Error('Некорректные данные рабочего пространства.'), {status:400});
+  }
+  if(!value.wms || typeof value.wms !== 'object' || Array.isArray(value.wms)){
+    throw Object.assign(new Error('В резервной копии отсутствуют складские данные WMS.'), {status:400});
+  }
+  const rawWms = value.wms;
+  const arrays = ['nomenclature','boxes','transfers','revisions','tasks','movements','events'];
+  const wms = {...rawWms};
+  arrays.forEach(key=>{wms[key]=Array.isArray(rawWms[key])?rawWms[key]:[]});
+  if(wms.nomenclature.length > 200000 || wms.boxes.length > 100000 || wms.movements.length > 100000){
+    throw Object.assign(new Error('Резервная копия превышает допустимый объем данных.'), {status:400});
+  }
+  return {warehouses, workspace, wms};
+}
+function stateSummary(state){
+  const warehouses = Array.isArray(state?.warehouses) ? state.warehouses : [];
+  const wms = state?.wms || {};
+  const boxes = Array.isArray(wms.boxes) ? wms.boxes : [];
+  return {
+    warehouses:warehouses.length,
+    zones:warehouses.reduce((sum,item)=>sum+(Array.isArray(item?.zones)?item.zones.length:0),0),
+    nomenclature:Array.isArray(wms.nomenclature)?wms.nomenclature.length:0,
+    boxes:boxes.length,
+    units:boxes.reduce((sum,box)=>sum+(Array.isArray(box?.items)?box.items.reduce((inner,item)=>inner+Math.max(0,Number(item?.quantity)||0),0):0),0),
+    movements:Array.isArray(wms.movements)?wms.movements.length:0,
+    tasks:Array.isArray(wms.tasks)?wms.tasks.length:0,
+    revisions:Array.isArray(wms.revisions)?wms.revisions.length:0
+  };
+}
+
 async function googleSummaryItems(){
   const controller = new AbortController();
   const timeout = setTimeout(()=>controller.abort(), 8000);
@@ -298,6 +338,21 @@ async function api(req, res, pathname){
       .run(revision,json(body.state),timestamp,user.id);
     audit(user.id, 'state.updated', 'state', 'main', {revision});
     send(res,200,{ok:true,revision,updatedAt:timestamp});return;
+  }
+  if(req.method === 'POST' && pathname === '/api/state/import-backup'){
+    const user = requireUser(req, res, ['admin']); if(!user)return;
+    const body = await readBody(req);
+    let imported;
+    try{imported = normalizeImportedState(body.state)}catch(error){send(res,error.status||400,{error:error.message});return}
+    const current = db.prepare('SELECT revision FROM app_state WHERE id=1').get();
+    if(Number.isInteger(body.revision) && body.revision !== current.revision){
+      send(res,409,{error:'Центральная база изменилась после открытия импорта. Обновите данные и повторите.',revision:current.revision});return;
+    }
+    const revision = current.revision + 1, timestamp = now(), summary = stateSummary(imported);
+    db.prepare('UPDATE app_state SET revision=?,payload=?,updated_at=?,updated_by=? WHERE id=1')
+      .run(revision,json(imported),timestamp,user.id);
+    audit(user.id, 'state.backup_imported', 'state', 'main', {revision,...summary});
+    send(res,200,{ok:true,revision,updatedAt:timestamp,summary});return;
   }
   if(req.method === 'GET' && pathname === '/api/audit'){
     const user = requireUser(req, res, ['admin','manager']); if(!user)return;
