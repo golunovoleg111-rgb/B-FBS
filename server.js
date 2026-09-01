@@ -280,7 +280,7 @@ async function api(req, res, pathname){
 }
 
 const MIME = {'.html':'text/html; charset=utf-8','.css':'text/css; charset=utf-8','.js':'text/javascript; charset=utf-8','.json':'application/json; charset=utf-8','.svg':'image/svg+xml','.png':'image/png','.ico':'image/x-icon'};
-const PUBLIC_FILES = new Set(['index.html','styles.css','editor-fixes.css','workspace-v4.css','workspace-v5.css','workspace-v6.css','wms-final.css','app.js','workspace-hotfix.js','workspace-v4.js','workspace-v5.js','workspace-v6.js','wms-final.js','manifest.webmanifest','sw.js','vendor/qrcode.min.js']);
+const PUBLIC_FILES = new Set(['index.html','styles.css','editor-fixes.css','workspace-v4.css','workspace-v5.css','workspace-v6.css','wms-final.css','app.js','workspace-hotfix.js','workspace-v4.js','workspace-v5.js','workspace-v6.js','wms-final.js','manifest.webmanifest','sw.js','vendor/qrcode.min.js','vendor/xlsx.full.min.js']);
 function staticFile(req, res, pathname){
   const requested = pathname === '/' ? 'index.html' : decodeURIComponent(pathname.slice(1));
   if(!requested || !PUBLIC_FILES.has(requested)){
