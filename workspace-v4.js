@@ -180,7 +180,9 @@
 
   function enhancedRender(){
     if(sessionStorage.getItem(AUTH_KEY)!=='admin'){loginView();return}
-    if(activeTab==='workspace'&&workspaceMode==='management')enhancedClampPan();
+    // Published mode has a responsive viewport controller in workspace-v6.
+    // Do not apply the old fixed 1000×500 clamp before every render.
+    if(activeTab==='workspace'&&workspaceMode==='management'&&!window.__bfbsPublishedViewportController)enhancedClampPan();
     let c=activeTab==='dashboard'?dashboardView():activeTab==='workspace'?workspaceView():placeholderView(TABS.find(t=>t[0]===activeTab));
     root.innerHTML=shell(c);bindCommon();
     if(activeTab==='workspace')bindWorkspace();
@@ -188,6 +190,6 @@
   window.render=enhancedRender;
 
   migrateCurrent();
-  window.addEventListener('resize',()=>{if(activeTab==='workspace'){enhancedClampPan();updateCanvas()}});
+  window.addEventListener('resize',()=>{if(activeTab==='workspace'){if(workspaceMode!=='management'||!window.__bfbsPublishedViewportController)enhancedClampPan();updateCanvas()}});
   render();
 })();
