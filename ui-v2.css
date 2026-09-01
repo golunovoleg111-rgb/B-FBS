@@ -1019,3 +1019,50 @@ select.ui-native-select{
   .scan-indicator{justify-self:start}
   .scan-result{align-items:flex-start;flex-direction:column}
 }
+
+
+/* PR#34 — searchable manual SKU picker */
+.manual-sku-picker{
+  display:grid;gap:10px;padding:11px;
+  border:1px solid #dfe4ed;border-radius:12px;
+  background:#fff;
+}
+.manual-sku-head{display:grid;gap:3px}
+.manual-sku-head b{font-size:10px;color:var(--ui-ink)}
+.manual-sku-head small{font-size:8px;color:var(--ui-faint);line-height:1.45;font-weight:500}
+.article-search{position:relative}
+.article-search-results{
+  position:absolute;left:0;right:0;top:calc(100% + 6px);z-index:21020;
+  max-height:290px;overflow:auto;padding:6px;
+  background:rgba(255,255,255,.995);border:1px solid #dfe4ed;border-radius:12px;
+  box-shadow:0 18px 50px rgba(13,18,32,.17);
+  animation:uiModalIn .16s var(--ui-ease) both;
+}
+.article-search-results[hidden]{display:none!important}
+.article-search-item{
+  width:100%;min-height:46px;border:0;border-radius:9px;background:transparent;
+  padding:8px 9px;display:grid;grid-template-columns:minmax(0,1fr) auto;gap:14px;
+  align-items:center;text-align:left;cursor:pointer;color:var(--ui-text);
+}
+.article-search-item:hover{background:#f3f5ff}
+.article-search-item>span:first-child{min-width:0;display:grid;gap:3px}
+.article-search-item b{
+  font-size:10px;color:var(--ui-ink);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;
+}
+.article-search-item small{
+  font-size:8px;color:var(--ui-faint);font-weight:500;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;
+}
+.article-search-item>span:last-child{
+  color:var(--ui-accent-strong);font-size:8px;font-weight:720;
+}
+.article-search-empty{padding:16px;text-align:center;color:var(--ui-faint);font-size:9px}
+.resolved-barcode{
+  min-height:38px;padding:8px 10px;border:1px solid #e4e8f0;border-radius:9px;
+  background:#f8f9fc;display:flex;align-items:center;justify-content:space-between;gap:12px;
+}
+.resolved-barcode span{
+  font-size:8px;font-weight:760;letter-spacing:.08em;text-transform:uppercase;color:var(--ui-faint);
+}
+.resolved-barcode b{
+  font-size:10px;color:var(--ui-ink);font-variant-numeric:tabular-nums;
+}

@@ -836,16 +836,40 @@
     if(!wms.nomenclature.length){toast('Сначала добавьте или импортируйте номенклатуру.','warning');return}
     const warehouseId=box?.warehouseId||activeWarehouseId(),zoneId=box?.zoneId||defaultZoneId||((warehouseId===activeWarehouseId()?zones:warehouses().find(item=>item.id===warehouseId)?.zones)||[])[0]?.id;
     if(!zoneId){toast('Сначала создайте зону хранения.','warning');return}
+
     const selectedBarcode=box?.items?.[0]?.barcode||'';
+    const selectedSku=itemByBarcode(selectedBarcode);
+    const selectedArticle=selectedSku?.article||'';
+    const selectedSize=selectedSku?.size||'';
+
     openModal(box?'Изменить коробку':'Новая коробка',`<form class="wms-form" id="box-form">
       <label>ID коробки<input name="id" value="${esc(box?.id||nextBoxId())}" ${box?'readonly':''} required></label>
       <label>Зона<select name="zoneId">${zoneOptions(warehouseId,zoneId)}</select></label>
+
       <div class="barcode-scan-block">
-        <div class="barcode-scan-head"><div><b>Сканирование ШК</b><small>Сканер может работать как клавиатура: наведите курсор сюда и отсканируйте товар.</small></div><span class="scan-indicator" id="box-scan-indicator">Готов к сканированию</span></div>
+        <div class="barcode-scan-head"><div><b>Сканирование ШК</b><small>Отсканируйте товар — артикул, размер и ШК заполнятся автоматически.</small></div><span class="scan-indicator" id="box-scan-indicator">Готов к сканированию</span></div>
         <input id="box-barcode-scan" inputmode="numeric" autocomplete="off" placeholder="Отсканируйте или введите ШК товара" value="${esc(selectedBarcode)}">
-        <div class="scan-result" id="box-scan-result">${selectedBarcode?esc((itemByBarcode(selectedBarcode)?.article||'')+' · '+(itemByBarcode(selectedBarcode)?.size||'')):'После успешного сканирования товар выберется автоматически.'}</div>
+        <div class="scan-result" id="box-scan-result">${selectedBarcode?esc((selectedSku?.article||'')+' · '+(selectedSku?.size||'')):'После успешного сканирования товар выберется автоматически.'}</div>
       </div>
-      <label>Товар<select name="barcode">${skuOptions(selectedBarcode)}</select></label>
+
+      <div class="manual-sku-picker">
+        <div class="manual-sku-head"><b>Ручной подбор</b><small>Найдите уникальный артикул, затем выберите размер — ШК подставится из номенклатуры.</small></div>
+        <label>Артикул
+          <div class="article-search">
+            <input id="box-article-search" autocomplete="off" placeholder="Например: 210_К" value="${esc(selectedArticle)}">
+            <div id="box-article-results" class="article-search-results" hidden></div>
+          </div>
+        </label>
+        <label>Размер
+          <select id="box-size-select" ${selectedArticle?'':'disabled'}><option value="">Сначала выберите артикул</option></select>
+        </label>
+        <input type="hidden" name="barcode" value="${esc(selectedBarcode)}">
+        <div class="resolved-barcode" id="box-resolved-barcode">
+          <span>ШК</span>
+          <b>${selectedBarcode?esc(selectedBarcode):'—'}</b>
+        </div>
+      </div>
+
       <label>${box?'Добавить к остатку':'Начальное количество'}<input name="quantity" type="number" min="0" value="${box?0:1}"></label>
       ${box?`<label class="check-row"><input name="locked" type="checkbox" ${box.locked?'checked':''}> Заблокировать операции</label>`:''}
       <div class="form-error"></div>
@@ -855,8 +879,124 @@
       const scanInput=modal.querySelector('#box-barcode-scan');
       const scanResult=modal.querySelector('#box-scan-result');
       const scanIndicator=modal.querySelector('#box-scan-indicator');
-      const barcodeSelect=form.elements.barcode;
+      const articleInput=modal.querySelector('#box-article-search');
+      const articleResults=modal.querySelector('#box-article-results');
+      const sizeSelect=modal.querySelector('#box-size-select');
+      const barcodeInput=form.elements.barcode;
+      const barcodeView=modal.querySelector('#box-resolved-barcode b');
       const quantityInput=form.elements.quantity;
+
+      const uniqueArticles=[...new Set(wms.nomenclature.map(item=>String(item.article||'').trim()).filter(Boolean))]
+        .sort((a,b)=>a.localeCompare(b,'ru',{numeric:true,sensitivity:'base'}));
+
+      const articleItems=article=>wms.nomenclature
+        .filter(item=>item.article===article)
+        .slice()
+        .sort((a,b)=>String(a.size).localeCompare(String(b.size),'ru',{numeric:true,sensitivity:'base'}));
+
+      let selectedArticleValue='';
+
+      const syncBarcodeView=sku=>{
+        barcodeInput.value=sku?.barcode||'';
+        barcodeView.textContent=sku?.barcode||'—';
+      };
+
+      const selectSize=(size,{notify=false}={})=>{
+        const items=articleItems(selectedArticleValue);
+        const sku=items.find(item=>String(item.size)===String(size));
+        if(!sku){syncBarcodeView(null);return null}
+        sizeSelect.value=String(sku.size);
+        sizeSelect.dispatchEvent(new Event('change',{bubbles:true}));
+        syncBarcodeView(sku);
+        scanInput.value=sku.barcode;
+        scanIndicator.textContent='Выбрано вручную';
+        scanIndicator.className='scan-indicator success';
+        scanResult.innerHTML=`<b>${esc(sku.article)}</b><span>Размер ${esc(sku.size)} · ШК ${esc(sku.barcode)}</span>`;
+        if(notify)toast(`Выбрано: ${sku.article} · ${sku.size}`,'success');
+        return sku;
+      };
+
+      const selectArticle=(article,{preferredSize='',preferredBarcode='',focusSize=true}={})=>{
+        const value=String(article||'').trim();
+        const items=articleItems(value);
+        if(!items.length)return false;
+
+        selectedArticleValue=value;
+        articleInput.value=value;
+        articleResults.hidden=true;
+        articleResults.innerHTML='';
+
+        sizeSelect.disabled=false;
+        const uniqueSizes=[...new Set(items.map(item=>String(item.size)))];
+        sizeSelect.innerHTML=uniqueSizes.map(size=>`<option value="${esc(size)}">${esc(size)}</option>`).join('');
+
+        let target=items.find(item=>preferredBarcode&&item.barcode===preferredBarcode)
+          ||items.find(item=>preferredSize&&String(item.size)===String(preferredSize))
+          ||items[0];
+
+        sizeSelect.value=String(target.size);
+        sizeSelect.dispatchEvent(new Event('change',{bubbles:true}));
+        syncBarcodeView(target);
+
+        if(focusSize)requestAnimationFrame(()=>sizeSelect.nextElementSibling?.querySelector('.ui-select-trigger')?.focus());
+        return true;
+      };
+
+      const renderArticleResults=()=>{
+        const query=articleInput.value.trim().toLowerCase();
+        if(!query){
+          articleResults.hidden=true;
+          articleResults.innerHTML='';
+          return;
+        }
+
+        const matches=uniqueArticles.filter(article=>article.toLowerCase().includes(query)).slice(0,30);
+        articleResults.innerHTML=matches.length
+          ?matches.map(article=>{
+            const items=articleItems(article),sizes=[...new Set(items.map(item=>String(item.size)))];
+            return `<button type="button" class="article-search-item" data-article="${esc(article)}"><span><b>${esc(article)}</b><small>${sizes.length} размеров · ${esc(sizes.slice(0,8).join(', '))}${sizes.length>8?'…':''}</small></span><span>Выбрать</span></button>`;
+          }).join('')
+          :'<div class="article-search-empty">Совпадений не найдено</div>';
+
+        articleResults.hidden=false;
+        articleResults.querySelectorAll('[data-article]').forEach(button=>button.addEventListener('click',()=>{
+          selectArticle(button.dataset.article);
+        }));
+      };
+
+      articleInput.addEventListener('input',()=>{
+        const current=articleInput.value.trim();
+        if(current!==selectedArticleValue){
+          selectedArticleValue='';
+          sizeSelect.disabled=true;
+          sizeSelect.innerHTML='<option value="">Сначала выберите артикул</option>';
+          sizeSelect.dispatchEvent(new Event('change',{bubbles:true}));
+          syncBarcodeView(null);
+        }
+        renderArticleResults();
+      });
+      articleInput.addEventListener('focus',renderArticleResults);
+      articleInput.addEventListener('keydown',event=>{
+        if(event.key==='Escape'){articleResults.hidden=true;return}
+        if(event.key!=='Enter')return;
+        event.preventDefault();
+        const exact=uniqueArticles.find(article=>article.toLowerCase()===articleInput.value.trim().toLowerCase());
+        const first=articleResults.querySelector('[data-article]')?.dataset.article;
+        if(exact||first)selectArticle(exact||first);
+      });
+      articleResults.addEventListener('mousedown',event=>event.preventDefault());
+      articleInput.addEventListener('blur',()=>setTimeout(()=>{articleResults.hidden=true},120));
+
+      sizeSelect.addEventListener('change',()=>{
+        if(!selectedArticleValue)return;
+        const sku=articleItems(selectedArticleValue).find(item=>String(item.size)===String(sizeSelect.value));
+        if(!sku){syncBarcodeView(null);return}
+        syncBarcodeView(sku);
+        scanInput.value=sku.barcode;
+        scanIndicator.textContent='Выбрано вручную';
+        scanIndicator.className='scan-indicator success';
+        scanResult.innerHTML=`<b>${esc(sku.article)}</b><span>Размер ${esc(sku.size)} · ШК ${esc(sku.barcode)}</span>`;
+      });
 
       const recognizeBarcode=(raw,{notify=false}={})=>{
         const value=String(raw||'').trim();
@@ -874,9 +1014,10 @@
           if(notify)toast('Штрихкод не найден в номенклатуре.','warning');
           return null;
         }
-        barcodeSelect.value=sku.barcode;
-        barcodeSelect.dispatchEvent(new Event('input',{bubbles:true}));
-        barcodeSelect.dispatchEvent(new Event('change',{bubbles:true}));
+
+        selectArticle(sku.article,{preferredSize:sku.size,preferredBarcode:sku.barcode,focusSize:false});
+        selectSize(sku.size);
+        scanInput.value=sku.barcode;
         scanIndicator.textContent='Распознано';
         scanIndicator.className='scan-indicator success';
         scanResult.innerHTML=`<b>${esc(sku.article)}</b><span>Размер ${esc(sku.size)} · ШК ${esc(sku.barcode)}</span>`;
@@ -889,8 +1030,6 @@
         clearTimeout(scanTimer);
         const value=scanInput.value.trim();
         if(!value){recognizeBarcode('');return}
-        // Hardware scanners usually deliver the whole barcode within a few ms.
-        // A short debounce also keeps manual typing comfortable.
         scanTimer=setTimeout(()=>{
           const sku=recognizeBarcode(value);
           if(sku)quantityInput?.focus();
@@ -902,7 +1041,6 @@
         clearTimeout(scanTimer);
         const sku=recognizeBarcode(scanInput.value,{notify:true});
         if(sku){
-          scanInput.value=sku.barcode;
           quantityInput?.focus();
           quantityInput?.select?.();
         }else{
@@ -910,12 +1048,10 @@
         }
       });
 
-      barcodeSelect.addEventListener('change',()=>{
-        const sku=itemByBarcode(barcodeSelect.value);
-        if(!sku)return;
-        scanInput.value=sku.barcode;
-        recognizeBarcode(sku.barcode);
-      });
+      if(selectedSku){
+        selectArticle(selectedSku.article,{preferredSize:selectedSku.size,preferredBarcode:selectedSku.barcode,focusSize:false});
+        selectSize(selectedSku.size);
+      }
 
       requestAnimationFrame(()=>{scanInput.focus();scanInput.select()});
 
@@ -926,14 +1062,15 @@
         if(zone?.capacity&&count>=Number(zone.capacity)){form.querySelector('.form-error').innerHTML='<div class="error">Вместимость зоны исчерпана.</div>';return}
         if(!box&&wms.boxes.some(item=>item.id.toLowerCase()===data.id.trim().toLowerCase())){form.querySelector('.form-error').innerHTML='<div class="error">Такой ID коробки уже существует.</div>';return}
         const sku=itemByBarcode(data.barcode);
-        if(!sku){form.querySelector('.form-error').innerHTML='<div class="error">Выберите или отсканируйте товар из номенклатуры.</div>';return}
+        if(!sku){form.querySelector('.form-error').innerHTML='<div class="error">Отсканируйте товар или выберите артикул и размер.</div>';return}
+
         const quantity=Math.max(0,Number(data.quantity)||0),target=box||{id:data.id.trim(),qrCode:`BFBS:BOX:${data.id.trim()}`,warehouseId,items:[],createdAt:new Date().toISOString(),locked:false};
         target.zoneId=data.zoneId;target.locked=box?form.elements.locked.checked:false;
         if(quantity){const item=upsertBoxItem(target,sku,quantity);recordMovement(box?'replenishment':'initial_stock',quantity,target,item)}
         target.updatedAt=new Date().toISOString();if(!box)wms.boxes.push(target);
-        saveWms(`${box?'Изменена':'Создана'} коробка ${target.id}`);close();render()
+        saveWms(`${box?'Изменена':'Создана'} коробка ${target.id}`);close();render();
       };
-    })
+    });
   }
   function deleteBox(box){
     if(!box)return false;
