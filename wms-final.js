@@ -10,12 +10,30 @@
   const WAREHOUSE_KEY='b-fbs-warehouses-v1';
   const ACTIVE_WAREHOUSE_KEY='b-fbs-active-warehouse';
   const ROLE_NAMES={admin:'Администратор',manager:'Менеджер',picker:'Сборщик',auditor:'Ревизор'};
-  const ROLE_TABS={
-    admin:['dashboard','workspace','inventory','transfer','revision','account','tasks'],
-    manager:['dashboard','workspace','inventory','transfer','revision','tasks'],
-    picker:['dashboard','workspace','inventory','transfer','tasks'],
-    auditor:['dashboard','workspace','inventory','revision']
+  const PERMISSION_LABELS={
+    dashboard_view:['Главный экран','Просмотр оперативной сводки'],
+    workspace_view:['Рабочее пространство','Просмотр схемы склада, зон и коробок'],
+    layout_manage:['Планировка склада','Создание складов, изменение стен, объектов и публикация схемы'],
+    zones_manage:['Зоны хранения','Создание, перемещение, изменение, заморозка и удаление зон'],
+    inventory_view:['Учет склада','Просмотр номенклатуры, коробок и остатков'],
+    inventory_manage:['Коробки и остатки','Создание/удаление коробок, ручное и массовое пополнение'],
+    nomenclature_manage:['Номенклатура','Импорт и изменение номенклатуры WB'],
+    transfers_view:['Перемещения','Просмотр заявок на перемещение'],
+    transfers_manage:['Управление перемещениями','Создание, отправка, прием и отмена заявок'],
+    revisions_view:['Ревизия','Просмотр заданий ревизии'],
+    revisions_manage:['Проведение ревизии','Создание и выполнение ревизий'],
+    tasks_view:['Сборочные задания','Просмотр сборочных заданий'],
+    tasks_manage:['Управление заданиями','Создание и завершение сборочных заданий'],
+    tasks_pick:['Сборка сканером','Scanner Mode и списание товара по заданию']
   };
+  const ALL_PERMISSION_KEYS=Object.keys(PERMISSION_LABELS);
+  const ROLE_PERMISSION_DEFAULTS={
+    admin:Object.fromEntries(ALL_PERMISSION_KEYS.map(key=>[key,true])),
+    manager:{dashboard_view:true,workspace_view:true,layout_manage:true,zones_manage:true,inventory_view:true,inventory_manage:true,nomenclature_manage:true,transfers_view:true,transfers_manage:true,revisions_view:true,revisions_manage:true,tasks_view:true,tasks_manage:true,tasks_pick:true},
+    picker:{dashboard_view:true,workspace_view:true,layout_manage:false,zones_manage:false,inventory_view:true,inventory_manage:false,nomenclature_manage:false,transfers_view:true,transfers_manage:true,revisions_view:false,revisions_manage:false,tasks_view:true,tasks_manage:false,tasks_pick:true},
+    auditor:{dashboard_view:true,workspace_view:true,layout_manage:false,zones_manage:false,inventory_view:true,inventory_manage:false,nomenclature_manage:false,transfers_view:false,transfers_manage:false,revisions_view:true,revisions_manage:true,tasks_view:false,tasks_manage:false,tasks_pick:false}
+  };
+  const TAB_PERMISSION={dashboard:'dashboard_view',workspace:'workspace_view',inventory:'inventory_view',transfer:'transfers_view',revision:'revisions_view',tasks:'tasks_view'};
   const EMPTY_WMS={nomenclature:[],boxes:[],transfers:[],revisions:[],tasks:[],movements:[],events:[]};
   let wms=loadWms();
   let currentUser=readJson(sessionStorage.getItem(USER_KEY),null);
@@ -33,7 +51,16 @@
   function uid(prefix){return `${prefix}-${Date.now().toString(36)}-${crypto.getRandomValues(new Uint32Array(1))[0].toString(36)}`.toUpperCase()}
   function dateText(value){return value?new Date(value).toLocaleString('ru-RU'):'—'}
   function roleName(role){return ROLE_NAMES[role]||role||'Сотрудник'}
-  function allowed(tab){return (ROLE_TABS[currentUser?.role||'admin']||ROLE_TABS.picker).includes(tab)}
+  function defaultPermissions(role){return {...(ROLE_PERMISSION_DEFAULTS[role]||ROLE_PERMISSION_DEFAULTS.picker)}}
+  function userPermissions(user=currentUser){return user?.role==='admin'?defaultPermissions('admin'):{...defaultPermissions(user?.role||'picker'),...(user?.permissions||{})}}
+  function can(permission,user=currentUser){return user?.role==='admin'||!!userPermissions(user)[permission]}
+  function allowed(tab){
+    if(tab==='account')return currentUser?.role==='admin';
+    const permission=TAB_PERMISSION[tab];return permission?can(permission):false;
+  }
+  function requireClientPermission(permission,message='Недостаточно прав для этой операции.'){
+    if(can(permission))return true;toast(message,'warning');return false;
+  }
   function warehouses(){return readJson(localStorage.getItem(WAREHOUSE_KEY),[])||[]}
   function activeWarehouseId(){
     const select=document.getElementById('warehouse-select');
