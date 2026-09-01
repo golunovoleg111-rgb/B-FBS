@@ -462,6 +462,7 @@
     if(!zone||zoneMoveId!==zone.id)return;
     persist();
     if(zoneEditDirty)saveWms(`Изменена геометрия зоны ${zone.name}`);
+    clearZoneResizePreview();
     zoneMoveId='';zoneEditOriginal=null;zoneEditDirty=false;zoneMoveStart=null;zoneResizeStart=null;
     closeZoneMenu();
     render();
@@ -471,6 +472,7 @@
     if(!zoneMoveId)return;
     const zone=zones.find(item=>item.id===zoneMoveId);
     restoreZoneGeometry(zone,zoneEditOriginal);
+    clearZoneResizePreview();
     zoneMoveId='';zoneEditOriginal=null;zoneEditDirty=false;zoneMoveStart=null;zoneResizeStart=null;
     closeZoneMenu();
     render();
@@ -528,6 +530,62 @@
     }
     svg.appendChild(group);
   }
+  function clearZoneResizePreview(){
+    document.getElementById('zone-resize-preview')?.remove();
+    document.querySelector('.wms-zone.live-resizing')?.classList.remove('live-resizing');
+  }
+  function syncLiveZoneGeometry(zone){
+    const node=[...document.querySelectorAll('[data-zone-id]')].find(item=>item.dataset.zoneId===zone.id);
+    if(!node)return;
+    node.classList.add('live-resizing');
+    const body=node.querySelector('.zone-body');
+    if(body){
+      body.setAttribute('x',zone.x);
+      body.setAttribute('y',zone.y);
+      body.setAttribute('width',zone.w);
+      body.setAttribute('height',zone.h);
+    }
+    const handles={
+      nw:[zone.x,zone.y],
+      ne:[zone.x+zone.w,zone.y],
+      sw:[zone.x,zone.y+zone.h],
+      se:[zone.x+zone.w,zone.y+zone.h]
+    };
+    node.querySelectorAll('[data-zone-resize]').forEach(handle=>{
+      const point=handles[handle.dataset.zoneResize];
+      if(point){handle.setAttribute('cx',point[0]);handle.setAttribute('cy',point[1])}
+    });
+  }
+  function showZoneResizePreview(zone){
+    const svg=document.getElementById('warehouse-svg');if(!svg||!zone)return;
+    svg.querySelector('#zone-resize-preview')?.remove();
+    syncLiveZoneGeometry(zone);
+    const ns='http://www.w3.org/2000/svg',group=document.createElementNS(ns,'g');
+    group.id='zone-resize-preview';
+    const outline=document.createElementNS(ns,'rect');
+    outline.setAttribute('class','zone-resize-preview-outline');
+    outline.setAttribute('x',zone.x);outline.setAttribute('y',zone.y);
+    outline.setAttribute('width',zone.w);outline.setAttribute('height',zone.h);outline.setAttribute('rx','8');
+    group.appendChild(outline);
+
+    const label=`${(zone.w*SCALE).toFixed(1)} × ${(zone.h*SCALE).toFixed(1)} м`;
+    const labelWidth=Math.max(82,label.length*6.6+20);
+    const cx=zone.x+zone.w/2,cy=zone.y+zone.h/2;
+
+    const badge=document.createElementNS(ns,'rect');
+    badge.setAttribute('class','zone-preview-badge');
+    badge.setAttribute('x',cx-labelWidth/2);badge.setAttribute('y',cy-14);
+    badge.setAttribute('width',labelWidth);badge.setAttribute('height','28');badge.setAttribute('rx','8');
+    group.appendChild(badge);
+
+    const text=document.createElementNS(ns,'text');
+    text.setAttribute('class','zone-preview-size');
+    text.setAttribute('x',cx);text.setAttribute('y',cy+4);
+    text.setAttribute('text-anchor','middle');
+    text.textContent=label;
+    group.appendChild(text);
+    svg.appendChild(group);
+  }
   window.onPointerDown=function(event){
     if(workspaceMode==='management'&&zoneDraw&&event.button===0){
       event.preventDefault();closeZoneMenu();zoneStart=snapZonePoint(floorPoint(event));zoneCurrent={...zoneStart};pointerAction='wms-zone';event.currentTarget.setPointerCapture(event.pointerId);showZonePreview();return
@@ -541,6 +599,7 @@
         zoneResizeStart={handle:resizeNode.dataset.zoneResize,geometry:zoneGeometry(zone)};
         pointerAction='wms-zone-resize';
         event.currentTarget.classList.add('zone-resizing');
+        showZoneResizePreview(zone);
         event.currentTarget.setPointerCapture(event.pointerId);
         return;
       }
@@ -591,7 +650,8 @@
       if(zoneResizeStart.handle.includes('n')){next.y=Math.min(p.y,bottom-minSize);next.h=bottom-next.y}
       if(zoneResizeStart.handle.includes('s')){next.h=Math.max(minSize,p.y-top)}
       if(validZone(next,zone.id)){
-        Object.assign(zone,next);zoneEditDirty=true;updateCanvas();
+        Object.assign(zone,next);zoneEditDirty=true;
+        showZoneResizePreview(zone);
       }
       return;
     }
@@ -617,6 +677,7 @@
     if(pointerAction==='wms-zone-move'||pointerAction==='wms-zone-resize'){
       const changed=zoneEditDirty;
       pointerAction=null;event.currentTarget.classList.remove('zone-moving','zone-resizing');try{event.currentTarget.releasePointerCapture(event.pointerId)}catch(_){}
+      clearZoneResizePreview();
       zoneMoveStart=null;zoneMoveChanged=false;zoneResizeStart=null;
       if(changed)suppressZoneClickUntil=Date.now()+250;
       render();

@@ -956,3 +956,21 @@ select.ui-native-select{
 .zone-edit-handle.ne,.zone-edit-handle.sw{cursor:nesw-resize}
 .editor-stage.zone-resizing{cursor:default!important}
 .zone-side-edit{min-width:82px!important}
+
+
+/* PR#32 — live resize preview */
+.wms-zone.live-resizing .zone-label,
+.wms-zone.live-resizing .box-dot{
+  opacity:.24!important;
+}
+.zone-resize-preview-outline{
+  fill:rgba(89,104,232,.08)!important;
+  stroke:#4657d9!important;
+  stroke-width:2.5!important;
+  stroke-dasharray:none!important;
+  vector-effect:non-scaling-stroke;
+  pointer-events:none!important;
+}
+#zone-resize-preview{
+  pointer-events:none!important;
+}
