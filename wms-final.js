@@ -19,7 +19,7 @@
   const EMPTY_WMS={nomenclature:[],boxes:[],transfers:[],revisions:[],tasks:[],movements:[],events:[]};
   let wms=loadWms();
   let currentUser=readJson(sessionStorage.getItem(USER_KEY),null);
-  let backendAvailable=false;
+  let backendAvailable=false,backendHealth=null;
   let serverRevision=Number(localStorage.getItem(REVISION_KEY)||0);
   let syncTimer=0,pollTimer=0,syncing=false,lastSyncError='';
   let zoneDraw=false,zoneStart=null,zoneCurrent=null;
@@ -78,7 +78,13 @@
     return data;
   }
   async function detectBackend(){
-    try{const controller=new AbortController();const timeout=setTimeout(()=>controller.abort(),1500);const response=await fetch('./api/health',{cache:'no-store',signal:controller.signal});clearTimeout(timeout);backendAvailable=response.ok&&String(response.headers.get('content-type')||'').includes('json')}catch(_){backendAvailable=false}
+    try{
+      const controller=new AbortController(),timeout=setTimeout(()=>controller.abort(),2500);
+      const response=await fetch('./api/health',{cache:'no-store',signal:controller.signal});
+      clearTimeout(timeout);
+      backendAvailable=response.ok&&String(response.headers.get('content-type')||'').includes('json');
+      backendHealth=backendAvailable?await response.json().catch(()=>null):null;
+    }catch(_){backendAvailable=false;backendHealth=null}
     document.body.classList.toggle('backend-online',backendAvailable);
     return backendAvailable;
   }
@@ -124,9 +130,10 @@
   function updateConnectionBadge(){
     const badge=document.getElementById('connection-badge');if(!badge)return;
     const pending=localStorage.getItem(PENDING_KEY)==='1';
-    badge.className=`connection-badge ${backendAvailable?(pending?'pending':'online'):'offline'}`;
-    badge.textContent=backendAvailable?(pending?'Синхронизация…':'Онлайн'):'Автономно';
-    badge.title=lastSyncError||'';
+    const ephemeral=backendAvailable&&backendHealth?.storage==='ephemeral';
+    badge.className=`connection-badge ${backendAvailable?(ephemeral?'warning':(pending?'pending':'online')):'offline'}`;
+    badge.textContent=backendAvailable?(ephemeral?'Онлайн · без диска':(pending?'Синхронизация…':'Онлайн')):'Автономно';
+    badge.title=lastSyncError||(ephemeral?'Сервер работает, но база находится во временном хранилище. Подключите persistent volume перед рабочим использованием.':'');
   }
   function toast(message,type='info'){
     let host=document.getElementById('wms-toasts');if(!host){host=document.createElement('div');host.id='wms-toasts';document.body.appendChild(host)}
@@ -156,7 +163,7 @@
 
   window.loginView=function(){
     root.innerHTML=`<main class="login"><section class="card"><div class="login-mark">B</div><div class="eyebrow">B-FBS</div><h1>Вход в систему</h1><p class="desc">Централизованная складская система</p><form class="form" id="login-form"><label>Логин<input id="login" autocomplete="username" required></label><label>Пароль<input id="password" type="password" autocomplete="current-password" required></label><div id="login-error"></div><button class="btn primary" type="submit">Войти</button></form><div class="login-connection" id="login-connection">Проверка сервера…</div></section></main>`;
-    const status=document.getElementById('login-connection');if(status)status.textContent=backendAvailable?'Сервер и общая база доступны':'Автономный режим · данные этого устройства';
+    const status=document.getElementById('login-connection');if(status)status.textContent=backendAvailable?(backendHealth?.storage==='ephemeral'?'Сервер доступен · требуется постоянный диск':'Сервер и общая база доступны'):'Автономный режим · данные этого устройства';
     document.getElementById('login-form').onsubmit=async event=>{
       event.preventDefault();const button=event.currentTarget.querySelector('button');button.disabled=true;const login=document.getElementById('login').value,password=document.getElementById('password').value,error=document.getElementById('login-error');error.innerHTML='';
       try{
