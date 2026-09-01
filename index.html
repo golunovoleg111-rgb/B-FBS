@@ -4,7 +4,7 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width,initial-scale=1">
   <meta name="description" content="B-FBS — складская система">
-  <meta name="theme-color" content="#111827">
+  <meta name="theme-color" content="#0d1220">
   <title>B-FBS</title>
   <link rel="stylesheet" href="./styles.css">
   <link rel="stylesheet" href="./editor-fixes.css">
@@ -12,9 +12,18 @@
   <link rel="stylesheet" href="./workspace-v5.css">
   <link rel="stylesheet" href="./workspace-v6.css">
   <link rel="stylesheet" href="./wms-final.css">
+  <link rel="stylesheet" href="./ui-v2.css">
   <link rel="manifest" href="./manifest.webmanifest">
 </head>
 <body>
+  <div id="app-loader" class="app-loader" aria-hidden="true">
+    <div class="app-loader-inner">
+      <div class="app-loader-mark">B</div>
+      <div class="app-loader-name">B-FBS</div>
+      <div class="app-loader-copy">Складская система</div>
+      <div class="app-loader-track"><span></span></div>
+    </div>
+  </div>
   <div id="root"></div>
   <script src="./app.js"></script>
   <script src="./workspace-hotfix.js"></script>
@@ -24,5 +33,6 @@
   <script src="./vendor/qrcode.min.js"></script>
   <script src="./vendor/xlsx.full.min.js"></script>
   <script src="./wms-final.js"></script>
+  <script src="./ui-v2.js"></script>
 </body>
 </html>
