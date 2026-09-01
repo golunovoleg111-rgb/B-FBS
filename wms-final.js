@@ -193,7 +193,42 @@
     return `<section class="wms-page"><div class="wms-page-head"><div><h2>Учет склада</h2><p>Только фактическое хранение в выбранном складе: зоны, коробки и остатки.</p></div><div class="wms-actions">${currentUser?.role==='admin'||currentUser?.role==='manager'?'<button class="btn" id="import-nomenclature">Импорт WB</button>':''}<button class="btn" id="bulk-replenish">Массовое пополнение</button><button class="btn primary" id="stock-replenish">Пополнение</button></div></div><div class="inventory-warehouse-bar"><div><span>Рабочий склад</span><strong id="inventory-warehouse-name">${esc(warehouseName(current))}</strong></div><select id="inventory-warehouse">${warehouses().map(item=>`<option value="${esc(item.id)}" ${item.id===current?'selected':''}>${esc(item.name)}</option>`).join('')}</select></div><div class="wms-filters inventory-storage-filters"><div class="quick-search"><input id="inventory-search" autocomplete="off" placeholder="Поиск внутри выбранного склада: ШК, артикул, размер, зона или коробка"><div id="inventory-quick-results" class="quick-search-results" hidden></div></div></div><div class="wms-table-wrap"><table class="wms-table"><thead><tr><th>ШК</th><th>Артикул</th><th>Размер</th><th>Количество</th><th>Зона</th><th>Коробка</th><th>Обновлено</th></tr></thead><tbody id="inventory-body"></tbody></table></div></section>`;
   }
 
-  function accountView(){return `<section class="wms-page"><div class="wms-page-head"><div><h2>Сотрудники</h2><p>Учетные записи и роли хранятся на сервере.</p></div><button class="btn primary" id="add-user">+ Добавить сотрудника</button></div><div id="users-content">${backendAvailable?'Загрузка…':empty('Добавление пользователей доступно при подключении к серверу.')}</div><div class="wms-subsection"><div class="panel-head"><div class="panel-title">Журнал системы</div><button class="btn" id="export-data">Экспорт данных</button></div><div id="audit-content">${backendAvailable?'Загрузка…':'Нет соединения с сервером'}</div></div></section>`}
+  function accountView(){
+    const admin=currentUser?.role==='admin';
+    return `<section class="wms-page">
+      <div class="wms-page-head">
+        <div><h2>Сотрудники</h2><p>Учетные записи и роли хранятся на сервере.</p></div>
+        ${admin?'<button class="btn primary" id="add-user">+ Добавить сотрудника</button>':''}
+      </div>
+      <div id="users-content">${backendAvailable?'Загрузка…':empty('Добавление пользователей доступно при подключении к серверу.')}</div>
+
+      <div class="wms-subsection migration-section">
+        <div class="panel-head">
+          <div>
+            <div class="panel-title">Перенос данных</div>
+            <div class="migration-note">Одноразовый перенос текущего склада из старой GitHub Pages-версии в центральную серверную базу.</div>
+          </div>
+          <span class="status-pill ${backendAvailable?'ok':'muted'}">${backendAvailable?'Сервер подключен':'Локальная версия'}</span>
+        </div>
+        <div class="migration-actions">
+          <div class="migration-action-card">
+            <div><b>1. Скачать локальную копию</b><small>Откройте старую версию B-FBS на устройстве, где уже есть склад, и скачайте JSON-копию.</small></div>
+            <button type="button" class="btn" id="export-local-backup">Скачать локальную копию</button>
+          </div>
+          <div class="migration-arrow">→</div>
+          <div class="migration-action-card ${backendAvailable&&admin?'':'disabled'}">
+            <div><b>2. Загрузить в центральную базу</b><small>${backendAvailable?'Импорт заменит серверное состояние данными из выбранной копии.':'Откройте Railway-версию B-FBS, чтобы выполнить импорт.'}</small></div>
+            <button type="button" class="btn primary" id="import-local-backup" ${backendAvailable&&admin?'':'disabled'}>Загрузить копию</button>
+          </div>
+        </div>
+      </div>
+
+      <div class="wms-subsection">
+        <div class="panel-head"><div class="panel-title">Журнал системы</div><button class="btn" id="export-data" ${backendAvailable&&admin?'':'disabled'}>Серверная копия</button></div>
+        <div id="audit-content">${backendAvailable?'Загрузка…':'Нет соединения с сервером'}</div>
+      </div>
+    </section>`;
+  }
 
   window.placeholderView=function(tab){
     if(tab?.[0]==='inventory')return inventoryView();
@@ -336,7 +371,114 @@
     const host=document.getElementById('users-content');if(!host||!backendAvailable)return;try{const result=await requestApi('/api/users');host.innerHTML=`<div class="wms-table-wrap"><table class="wms-table"><thead><tr><th>Сотрудник</th><th>Логин</th><th>Роль</th><th>Последний вход</th><th>Статус</th><th></th></tr></thead><tbody>${result.users.map(user=>`<tr><td><b>${esc(user.name)}</b></td><td>${esc(user.login)}</td><td>${esc(roleName(user.role))}</td><td>${dateText(user.lastLoginAt)}</td><td><span class="status-pill ${user.active?'ok':'muted'}">${user.active?'Активен':'Отключен'}</span></td><td><button class="table-link" data-edit-user="${esc(user.id)}">Изменить</button></td></tr>`).join('')}</tbody></table></div>`;host.querySelectorAll('[data-edit-user]').forEach(button=>button.onclick=()=>openUserForm(result.users.find(user=>user.id===button.dataset.editUser)))}catch(error){host.innerHTML=empty(error.message)}
   }
   async function loadAudit(){const host=document.getElementById('audit-content');if(!host||!backendAvailable)return;try{const result=await requestApi('/api/audit');host.innerHTML=`<div class="audit-list">${result.events.slice(0,50).map(event=>`<div><b>${esc(event.name||event.login||'Система')}</b><span>${esc(event.action)}</span><small>${dateText(event.createdAt)}</small></div>`).join('')||'Событий нет'}</div>`}catch(error){host.innerHTML=empty(error.message)}}
-  function bindAccount(){if(document.getElementById('users-content')){loadUsers();loadAudit()}document.getElementById('add-user')?.addEventListener('click',()=>openUserForm());document.getElementById('export-data')?.addEventListener('click',async()=>{try{const data=await requestApi('/api/export');const blob=new Blob([JSON.stringify(data,null,2)],{type:'application/json'}),link=document.createElement('a');link.href=URL.createObjectURL(blob);link.download=`b-fbs-backup-${new Date().toISOString().slice(0,10)}.json`;link.click();URL.revokeObjectURL(link.href)}catch(error){toast(error.message,'warning')}})}
+  function backupStateFromPayload(payload){
+    const state=payload?.state&&typeof payload.state==='object'?payload.state:payload;
+    if(!state||typeof state!=='object'||Array.isArray(state))throw new Error('Файл не содержит данные B-FBS.');
+    if(state.warehouses!=null&&!Array.isArray(state.warehouses))throw new Error('Некорректный список складов.');
+    if(state.workspace!=null&&(typeof state.workspace!=='object'||Array.isArray(state.workspace)))throw new Error('Некорректное рабочее пространство.');
+    if(!state.wms||typeof state.wms!=='object'||Array.isArray(state.wms))throw new Error('В файле отсутствуют данные WMS.');
+    const wmsData=Object.assign({},EMPTY_WMS,state.wms);
+    Object.keys(EMPTY_WMS).forEach(key=>{if(!Array.isArray(wmsData[key]))wmsData[key]=[]});
+    return {warehouses:state.warehouses??null,workspace:state.workspace??null,wms:wmsData};
+  }
+  function backupSummary(state){
+    const warehouseList=Array.isArray(state?.warehouses)?state.warehouses:[],boxes=state?.wms?.boxes||[];
+    return {
+      warehouses:warehouseList.length,
+      zones:warehouseList.reduce((sum,item)=>sum+(Array.isArray(item?.zones)?item.zones.length:0),0),
+      nomenclature:(state?.wms?.nomenclature||[]).length,
+      boxes:boxes.length,
+      units:boxes.reduce((sum,box)=>sum+(box.items||[]).reduce((inner,item)=>inner+Math.max(0,Number(item.quantity)||0),0),0),
+      movements:(state?.wms?.movements||[]).length,
+      tasks:(state?.wms?.tasks||[]).length,
+      revisions:(state?.wms?.revisions||[]).length
+    };
+  }
+  function downloadJson(filename,payload){
+    const blob=new Blob([JSON.stringify(payload,null,2)],{type:'application/json'}),link=document.createElement('a');
+    link.href=URL.createObjectURL(blob);link.download=filename;document.body.appendChild(link);link.click();link.remove();
+    setTimeout(()=>URL.revokeObjectURL(link.href),1000);
+  }
+  function exportLocalBackup(){
+    const state=serializeState(),summary=backupSummary(state),stamp=new Date().toISOString().replace(/[:.]/g,'-');
+    downloadJson(`b-fbs-local-backup-${stamp}.json`,{
+      format:'b-fbs-local-backup-v1',
+      exportedAt:new Date().toISOString(),
+      source:{origin:location.origin,mode:backendAvailable?'server-client':'local-browser'},
+      summary,
+      state
+    });
+    toast(`Локальная копия сохранена: ${summary.warehouses} склад., ${summary.boxes} кор., ${summary.units} ед.`,'success');
+  }
+  function openBackupImport(){
+    if(!backendAvailable||!token()){toast('Импорт доступен только в серверной версии B-FBS.','warning');return}
+    if(currentUser?.role!=='admin'){toast('Импорт резервной копии доступен только администратору.','warning');return}
+    openModal('Перенос данных в сервер',`
+      <div class="backup-import-warning"><b>Центральная база будет заменена</b><p>Выберите JSON-копию, скачанную со старой версии B-FBS. Перед подтверждением система покажет состав файла. Пользователи и пароли сервера не импортируются.</p></div>
+      <div class="import-drop backup-import-drop">
+        <input id="backup-file" type="file" accept=".json,application/json">
+        <div id="backup-preview">Файл не выбран</div>
+      </div>
+      <div class="modal-actions"><button type="button" class="btn" data-close>Отмена</button><button type="button" class="btn primary" id="confirm-backup-import" disabled>Перенести в сервер</button></div>
+    `,(modal,close)=>{
+      const input=modal.querySelector('#backup-file'),preview=modal.querySelector('#backup-preview'),confirmButton=modal.querySelector('#confirm-backup-import');
+      let importedState=null,summary=null;
+      input.onchange=async()=>{
+        const file=input.files?.[0];if(!file)return;
+        importedState=null;summary=null;confirmButton.disabled=true;preview.textContent='Проверка копии…';
+        try{
+          if(file.size>10*1024*1024)throw new Error('Копия больше 10 МБ. Сначала сообщите об этом — увеличим безопасный лимит.');
+          const payload=JSON.parse(await file.text());
+          importedState=backupStateFromPayload(payload);
+          summary=backupSummary(importedState);
+          preview.innerHTML=`<div class="backup-preview-grid">
+            <div><span>Склады</span><b>${summary.warehouses}</b></div>
+            <div><span>Зоны</span><b>${summary.zones}</b></div>
+            <div><span>Номенклатура</span><b>${summary.nomenclature}</b></div>
+            <div><span>Коробки</span><b>${summary.boxes}</b></div>
+            <div><span>Остаток</span><b>${summary.units} ед.</b></div>
+            <div><span>Движения</span><b>${summary.movements}</b></div>
+          </div><small class="backup-file-name">${esc(file.name)}</small>`;
+          confirmButton.disabled=false;
+        }catch(error){
+          preview.innerHTML=`<span class="error-text">${esc(error.message)}</span>`;
+        }
+      };
+      confirmButton.onclick=async()=>{
+        if(!importedState||!summary)return;
+        const ok=window.confirm(`Перенести в центральную базу: ${summary.warehouses} склад., ${summary.boxes} кор., ${summary.units} ед.? Текущее серверное состояние будет заменено.`);
+        if(!ok)return;
+        confirmButton.disabled=true;confirmButton.textContent='Переносим…';
+        try{
+          const current=await requestApi('/api/state');
+          const result=await requestApi('/api/state/import-backup',{method:'POST',body:JSON.stringify({revision:current.revision,state:importedState})});
+          applyState(importedState);
+          serverRevision=result.revision;
+          localStorage.setItem(REVISION_KEY,String(serverRevision));
+          localStorage.removeItem(PENDING_KEY);
+          close();
+          toast(`Перенос завершен: ${summary.warehouses} склад., ${summary.units} ед. Теперь данные доступны всем устройствам.`,'success');
+          setTimeout(()=>location.reload(),650);
+        }catch(error){
+          confirmButton.disabled=false;confirmButton.textContent='Перенести в сервер';
+          toast(error.message,'warning');
+        }
+      };
+    });
+  }
+  function bindAccount(){
+    if(document.getElementById('users-content')){loadUsers();loadAudit()}
+    document.getElementById('add-user')?.addEventListener('click',()=>openUserForm());
+    document.getElementById('export-local-backup')?.addEventListener('click',exportLocalBackup);
+    document.getElementById('import-local-backup')?.addEventListener('click',openBackupImport);
+    document.getElementById('export-data')?.addEventListener('click',async()=>{
+      if(!backendAvailable)return;
+      try{
+        const data=await requestApi('/api/export');
+        downloadJson(`b-fbs-server-backup-${new Date().toISOString().slice(0,10)}.json`,data);
+      }catch(error){toast(error.message,'warning')}
+    });
+  }
   function openUserForm(user){
     openModal(user?'Сотрудник':'Новый сотрудник',`<form class="wms-form" id="user-form"><label>Имя<input name="name" value="${esc(user?.name||'')}" required></label><label>Логин<input name="login" value="${esc(user?.login||'')}" required></label><label>Роль<select name="role">${Object.entries(ROLE_NAMES).map(([value,label])=>`<option value="${value}" ${user?.role===value?'selected':''}>${label}</option>`).join('')}</select></label><label>Пароль ${user?'<small>оставьте пустым без изменения</small>':''}<input name="password" type="password" ${user?'':'required'} minlength="8"></label>${user?`<label class="check-row"><input name="active" type="checkbox" ${user.active?'checked':''}> Учетная запись активна</label>`:''}<div class="form-error"></div><div class="modal-actions"><button type="button" class="btn" data-close>Отмена</button><button class="btn primary">Сохранить</button></div></form>`,(modal,close)=>{modal.querySelector('form').onsubmit=async event=>{event.preventDefault();const form=event.currentTarget,data=Object.fromEntries(new FormData(form));if(user)data.active=form.elements.active.checked;try{await requestApi(user?`/api/users/${encodeURIComponent(user.id)}`:'/api/users',{method:user?'PATCH':'POST',body:JSON.stringify(data)});close();toast('Учетная запись сохранена.','success');loadUsers()}catch(error){form.querySelector('.form-error').innerHTML=`<div class="error">${esc(error.message)}</div>`}}});
   }

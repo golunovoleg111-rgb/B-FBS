@@ -29,19 +29,19 @@ async function login(){
   state.wms=state.wms||{};
   state.wms.events=[marker,...(state.wms.events||[])];
 
-  const saved=await request('/api/state',{
+  const saved=await request('/api/state/import-backup',{
     token:clientA.token,
-    method:'PUT',
+    method:'POST',
     body:{revision:original.revision,state}
   });
 
   const seen=await request('/api/state',{token:clientB.token});
-  assert.equal(seen.revision,saved.revision,'Second session must see the latest server revision');
-  assert.ok(seen.state?.wms?.events?.some(event=>event.id===marker.id),'Second session must see data written by first session');
+  assert.equal(seen.revision,saved.revision,'Second session must see the imported server revision');
+  assert.ok(seen.state?.wms?.events?.some(event=>event.id===marker.id),'Second session must see backup data imported by first session');
 
-  await request('/api/state',{
+  await request('/api/state/import-backup',{
     token:clientB.token,
-    method:'PUT',
+    method:'POST',
     body:{revision:seen.revision,state:original.state}
   });
 
