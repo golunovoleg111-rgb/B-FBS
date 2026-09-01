@@ -1042,8 +1042,8 @@
       osc.type='sine';osc.frequency.value=kind==='error'?180:kind==='warn'?330:kind==='done'?720:520;
       gain.gain.setValueAtTime(.0001,ctx.currentTime);
       gain.gain.exponentialRampToValueAtTime(.08,ctx.currentTime+.01);
-      gain.gain.exponentialRampToValueAtTime(.0001,ctx.currentTime+(kind==='done'?.24:.12));
-      osc.connect(gain);gain.connect(ctx.destination);osc.start();osc.stop(ctx.currentTime+(kind==='done'?.25:.13));
+      gain.gain.exponentialRampToValueAtTime(.0001,ctx.currentTime+(kind==='done' ? .24 : .12));
+      osc.connect(gain);gain.connect(ctx.destination);osc.start();osc.stop(ctx.currentTime+(kind==='done' ? .25 : .13));
       osc.onended=()=>ctx.close().catch(()=>{});
     }catch(_){}
   }
@@ -1076,7 +1076,7 @@
 
       <label class="scanner-input-wrap">
         <span>Сканер / ручной ввод</span>
-        <input id="task-scan" autocomplete="off" inputmode="none" placeholder="QR коробки">
+        <input id="task-scan" autocomplete="off" inputmode="text" placeholder="QR коробки">
       </label>
 
       <div class="scanner-route-block">
@@ -1183,12 +1183,12 @@
 
       if(Number(line.picked)>=Number(line.required)){finishTask();return}
 
+      saveWms();
       if(Number(stock.quantity)<=0){
         activeBox=null;showBox();
         setState('warning',`Принято · ${line.picked}/${line.required}`,'Коробка закончилась. Отсканируйте следующую коробку.','ПРИНЯТО');
         input.placeholder='QR коробки';scannerBeep('ok');
       }else{
-        saveWms();
         setState('success',`Принято · ${line.picked}/${line.required}`,'Продолжайте сканировать этот товар.','ПРИНЯТО');
         scannerBeep('ok');
       }
