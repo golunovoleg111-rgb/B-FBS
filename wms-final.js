@@ -183,7 +183,7 @@
 
   function inventoryView(){
     const current=activeWarehouseId()||warehouses()[0]?.id||'';
-    return `<section class="wms-page"><div class="wms-page-head"><div><h2>Учет склада</h2><p>Только фактическое хранение в выбранном складе: зоны, коробки и остатки.</p></div><div class="wms-actions">${currentUser?.role==='admin'||currentUser?.role==='manager'?'<button class="btn" id="import-nomenclature">Импорт WB</button>':''}<button class="btn primary" id="stock-replenish">Пополнение</button></div></div><div class="inventory-warehouse-bar"><div><span>Рабочий склад</span><strong id="inventory-warehouse-name">${esc(warehouseName(current))}</strong></div><select id="inventory-warehouse">${warehouses().map(item=>`<option value="${esc(item.id)}" ${item.id===current?'selected':''}>${esc(item.name)}</option>`).join('')}</select></div><div class="wms-filters inventory-storage-filters"><div class="quick-search"><input id="inventory-search" autocomplete="off" placeholder="Поиск внутри выбранного склада: ШК, артикул, размер, зона или коробка"><div id="inventory-quick-results" class="quick-search-results" hidden></div></div></div><div class="wms-table-wrap"><table class="wms-table"><thead><tr><th>ШК</th><th>Артикул</th><th>Размер</th><th>Количество</th><th>Зона</th><th>Коробка</th><th>Обновлено</th></tr></thead><tbody id="inventory-body"></tbody></table></div></section>`;
+    return `<section class="wms-page"><div class="wms-page-head"><div><h2>Учет склада</h2><p>Только фактическое хранение в выбранном складе: зоны, коробки и остатки.</p></div><div class="wms-actions">${currentUser?.role==='admin'||currentUser?.role==='manager'?'<button class="btn" id="import-nomenclature">Импорт WB</button>':''}<button class="btn" id="bulk-replenish">Массовое пополнение</button><button class="btn primary" id="stock-replenish">Пополнение</button></div></div><div class="inventory-warehouse-bar"><div><span>Рабочий склад</span><strong id="inventory-warehouse-name">${esc(warehouseName(current))}</strong></div><select id="inventory-warehouse">${warehouses().map(item=>`<option value="${esc(item.id)}" ${item.id===current?'selected':''}>${esc(item.name)}</option>`).join('')}</select></div><div class="wms-filters inventory-storage-filters"><div class="quick-search"><input id="inventory-search" autocomplete="off" placeholder="Поиск внутри выбранного склада: ШК, артикул, размер, зона или коробка"><div id="inventory-quick-results" class="quick-search-results" hidden></div></div></div><div class="wms-table-wrap"><table class="wms-table"><thead><tr><th>ШК</th><th>Артикул</th><th>Размер</th><th>Количество</th><th>Зона</th><th>Коробка</th><th>Обновлено</th></tr></thead><tbody id="inventory-body"></tbody></table></div></section>`;
   }
 
   function accountView(){return `<section class="wms-page"><div class="wms-page-head"><div><h2>Сотрудники</h2><p>Учетные записи и роли хранятся на сервере.</p></div><button class="btn primary" id="add-user">+ Добавить сотрудника</button></div><div id="users-content">${backendAvailable?'Загрузка…':empty('Добавление пользователей доступно при подключении к серверу.')}</div><div class="wms-subsection"><div class="panel-head"><div class="panel-title">Журнал системы</div><button class="btn" id="export-data">Экспорт данных</button></div><div id="audit-content">${backendAvailable?'Загрузка…':'Нет соединения с сервером'}</div></div></section>`}
@@ -262,6 +262,7 @@
     }
     renderInventoryTable();
     document.getElementById('import-nomenclature')?.addEventListener('click',openImport);
+    document.getElementById('bulk-replenish')?.addEventListener('click',openBulkReplenishment);
     document.getElementById('stock-replenish')?.addEventListener('click',openReplenishment);
   }
 
@@ -1100,6 +1101,140 @@
     setTimeout(()=>window.print(),120);
   }
   function openBox(id){const box=wms.boxes.find(item=>item.id===id);if(!box)return;openModal(box.id,`<div class="box-detail"><div id="box-qr" class="qr-host"></div><div><span class="status-pill ${box.locked?'muted':'ok'}">${box.locked?'Заблокирована':'Активна'}</span><h3>${esc(warehouseName(box.warehouseId))} · ${esc(findZone(box.warehouseId,box.zoneId)?.name||box.zoneId)}</h3><p>QR: ${esc(box.qrCode)}</p></div></div><div class="wms-table-wrap"><table class="wms-table"><thead><tr><th>Артикул</th><th>ШК</th><th>Размер</th><th>Остаток</th></tr></thead><tbody>${(box.items||[]).map(item=>`<tr><td>${esc(item.article)}</td><td>${esc(item.barcode)}</td><td>${esc(item.size)}</td><td><b>${Number(item.quantity||0)}</b></td></tr>`).join('')||`<tr><td colspan="4">Коробка пуста</td></tr>`}</tbody></table></div><div class="modal-actions"><button class="btn" id="box-print">Печать QR</button>${['admin','manager'].includes(currentUser?.role)?'<button class="btn" id="box-edit">Изменить / пополнить</button><button class="btn danger-outline" id="box-delete">Удалить</button>':''}<button class="btn" data-close>Закрыть</button></div>`,(modal,close)=>{const host=modal.querySelector('#box-qr');if(window.QRCode)new QRCode(host,{text:box.qrCode,width:160,height:160,correctLevel:QRCode.CorrectLevel.M});modal.querySelector('#box-print').onclick=()=>printBoxLabel(box);modal.querySelector('#box-edit')?.addEventListener('click',()=>{close();openBoxForm(box)});modal.querySelector('#box-delete')?.addEventListener('click',()=>{if(deleteBox(box)){close();render()}})})}
+  function downloadBulkReplenishmentTemplate(){
+    if(!window.XLSX){toast('Модуль Excel не загружен.','warning');return}
+    const sheet=XLSX.utils.aoa_to_sheet([['Баркод','Количество']]);
+    sheet['!cols']=[{wch:22},{wch:14}];
+    const workbook=XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(workbook,sheet,'Пополнение');
+    XLSX.writeFile(workbook,'B-FBS_Массовое_пополнение.xlsx');
+  }
+  function rowsToBulkReplenishment(rows){
+    if(!rows?.length)return {items:[],error:'Файл пуст.'};
+    const headers=rows[0].map(normalizeHeader);
+    const find=candidates=>headers.findIndex(header=>candidates.some(candidate=>header.includes(candidate)));
+    const barcodeIndex=find(['баркод','штрихкод','шк','barcode','sku']);
+    const quantityIndex=find(['количество','колво','колич','qty','quantity']);
+    if(barcodeIndex<0||quantityIndex<0)return {items:[],error:'Нужны ровно два столбца: Баркод и Количество.'};
+
+    const aggregated=new Map();
+    const errors=[];
+    rows.slice(1).forEach((row,index)=>{
+      const barcode=String(row?.[barcodeIndex]||'').replace(/\.0$/,'').trim();
+      const rawQuantity=String(row?.[quantityIndex]??'').trim().replace(/\s/g,'').replace(',','.');
+      if(!barcode&&!rawQuantity)return;
+      const quantity=Number(rawQuantity);
+      if(!barcode){errors.push({row:index+2,message:'Не указан баркод.'});return}
+      if(!Number.isInteger(quantity)||quantity<=0){errors.push({row:index+2,barcode,message:'Количество должно быть целым числом больше 0.'});return}
+      aggregated.set(barcode,(aggregated.get(barcode)||0)+quantity);
+    });
+
+    return {items:[...aggregated].map(([barcode,quantity])=>({barcode,quantity})),errors};
+  }
+  function bulkTargetBox(warehouseId,barcode){
+    const candidates=wms.boxes
+      .filter(box=>box.warehouseId===warehouseId&&!box.locked&&!findZone(box.warehouseId,box.zoneId)?.locked&&(box.items||[]).some(item=>item.barcode===barcode))
+      .map(box=>({box,item:(box.items||[]).find(item=>item.barcode===barcode)}))
+      .sort((a,b)=>{
+        const quantityDiff=Number(b.item?.quantity||0)-Number(a.item?.quantity||0);
+        if(quantityDiff)return quantityDiff;
+        return String(b.box.updatedAt||'').localeCompare(String(a.box.updatedAt||''));
+      });
+    return candidates[0]||null;
+  }
+  function openBulkReplenishment(){
+    const warehouseId=inventoryWarehouseId();
+    if(!warehouseId){toast('Сначала выберите рабочий склад.','warning');return}
+    if(!wms.nomenclature.length){toast('Сначала загрузите номенклатуру.','warning');return}
+
+    openModal('Массовое пополнение',`
+      <div class="bulk-replenish-intro">
+        <div><span>Рабочий склад</span><b>${esc(warehouseName(warehouseId))}</b></div>
+        <p>Шаблон содержит только два столбца: «Баркод» и «Количество». B-FBS добавит количество к текущему остатку этого ШК на выбранном складе.</p>
+      </div>
+      <div class="bulk-template-row">
+        <div><b>1. Скачайте шаблон</b><small>Заполните баркоды и количество, не меняя названия двух столбцов.</small></div>
+        <button type="button" class="btn" id="bulk-template-download">Скачать шаблон XLSX</button>
+      </div>
+      <div class="bulk-template-row">
+        <div><b>2. Загрузите заполненный файл</b><small>Поддерживаются XLSX, XLS, CSV и TSV.</small></div>
+        <input id="bulk-replenish-file" type="file" accept=".xlsx,.xls,.csv,.tsv,.txt">
+      </div>
+      <div id="bulk-replenish-preview" class="bulk-replenish-preview"><div class="bulk-empty">Файл еще не выбран.</div></div>
+      <div class="modal-actions">
+        <button type="button" class="btn" data-close>Отмена</button>
+        <button type="button" class="btn primary" id="bulk-replenish-confirm" disabled>Пополнить</button>
+      </div>
+    `,(modal,close)=>{
+      const fileInput=modal.querySelector('#bulk-replenish-file');
+      const preview=modal.querySelector('#bulk-replenish-preview');
+      const confirm=modal.querySelector('#bulk-replenish-confirm');
+      let ready=[];
+
+      modal.querySelector('#bulk-template-download').onclick=downloadBulkReplenishmentTemplate;
+
+      const renderPreview=(prepared,fileErrors=[])=>{
+        const ok=prepared.filter(item=>item.status==='ready');
+        const errors=[...fileErrors,...prepared.filter(item=>item.status==='error')];
+        ready=ok;
+
+        const summary=`<div class="bulk-summary"><span class="status-pill">${ok.length} готово</span>${errors.length?`<span class="status-pill error">${errors.length} с ошибкой</span>`:''}<b>+${ok.reduce((sum,item)=>sum+item.quantity,0)} ед.</b></div>`;
+        const rows=prepared.length?prepared.map(item=>item.status==='ready'
+          ?`<tr><td>${esc(item.barcode)}</td><td><b>${esc(item.sku.article)}</b><small>Размер ${esc(item.sku.size)}</small></td><td><b>+${item.quantity}</b></td><td>${esc(findZone(item.box.warehouseId,item.box.zoneId)?.name||item.box.zoneId)} · ${esc(item.box.id)}</td><td>${Number(item.current)} → <b>${Number(item.current)+item.quantity}</b></td><td><span class="bulk-row-ok">Готово</span></td></tr>`
+          :`<tr class="bulk-row-error"><td>${esc(item.barcode||'—')}</td><td colspan="4">${esc(item.message)}</td><td><span>Ошибка</span></td></tr>`
+        ).join(''):'';
+
+        const parseErrors=fileErrors.map(error=>`<tr class="bulk-row-error"><td>${esc(error.barcode||'Строка '+error.row)}</td><td colspan="4">${esc(error.message)}</td><td><span>Ошибка</span></td></tr>`).join('');
+
+        preview.innerHTML=`${summary}<div class="wms-table-wrap bulk-preview-table"><table class="wms-table"><thead><tr><th>Баркод</th><th>Товар</th><th>Добавить</th><th>Куда</th><th>Остаток</th><th>Статус</th></tr></thead><tbody>${rows}${parseErrors}</tbody></table></div>`;
+        confirm.disabled=!ok.length;
+        confirm.textContent=ok.length?`Пополнить ${ok.length} поз.`:'Пополнить';
+      };
+
+      fileInput.onchange=async()=>{
+        const file=fileInput.files[0];if(!file)return;
+        ready=[];confirm.disabled=true;preview.innerHTML='<div class="bulk-empty">Чтение файла…</div>';
+        try{
+          if(file.size>10*1024*1024)throw new Error('Файл слишком большой. Максимальный размер — 10 МБ.');
+          let rows;
+          if(/\.xlsx?$/i.test(file.name))rows=workbookRows(await file.arrayBuffer());
+          else rows=parseDelimited(await file.text());
+
+          const parsed=rowsToBulkReplenishment(rows);
+          if(parsed.error)throw new Error(parsed.error);
+
+          const prepared=parsed.items.map(row=>{
+            const sku=itemByBarcode(row.barcode);
+            if(!sku)return {...row,status:'error',message:'Баркод отсутствует в номенклатуре.'};
+            const target=bulkTargetBox(warehouseId,row.barcode);
+            if(!target)return {...row,status:'error',sku,message:'На выбранном складе нет активной коробки с этим ШК. Сначала разместите товар вручную.'};
+            return {...row,status:'ready',sku,box:target.box,current:Number(target.item?.quantity||0)};
+          });
+          renderPreview(prepared,parsed.errors||[]);
+        }catch(error){
+          ready=[];confirm.disabled=true;
+          preview.innerHTML=`<div class="bulk-empty error-text">${esc(error.message)}</div>`;
+        }
+      };
+
+      confirm.onclick=()=>{
+        if(!ready.length)return;
+        const total=ready.reduce((sum,row)=>sum+row.quantity,0);
+        ready.forEach(row=>{
+          const box=wms.boxes.find(item=>item.id===row.box.id);
+          const sku=itemByBarcode(row.barcode);
+          if(!box||!sku)return;
+          const item=upsertBoxItem(box,sku,row.quantity);
+          recordMovement('bulk_replenishment',row.quantity,box,item,'Массовое пополнение');
+        });
+        saveWms(`Массовое пополнение: ${ready.length} поз., +${total} ед. · ${warehouseName(warehouseId)}`);
+        close();
+        toast(`Массовое пополнение завершено: +${total} ед. (${ready.length} поз.).`,'success');
+        renderInventoryTable();
+      };
+    });
+  }
+
   function openReplenishment(){
     if(!wms.nomenclature.length){toast('Сначала загрузите номенклатуру.','warning');return}
     openModal('Пополнение остатков',`<form class="wms-form" id="replenish-form"><label>Баркод товара<input name="barcode" list="sku-barcodes" autocomplete="off" required><datalist id="sku-barcodes">${wms.nomenclature.map(item=>`<option value="${esc(item.barcode)}">${esc(item.article)} · ${esc(item.size)}</option>`).join('')}</datalist></label><label>Коробка<select name="boxId" id="replenish-box"><option value="">Сначала укажите баркод</option></select></label><label>Количество<input name="quantity" type="number" min="1" value="1" required></label><div class="form-error"></div><div class="modal-actions"><button type="button" class="btn" data-close>Отмена</button><button class="btn primary">Оприходовать</button></div></form>`,(modal,close)=>{const form=modal.querySelector('form'),barcode=form.elements.barcode,boxSelect=form.elements.boxId;const update=()=>{const matches=wms.boxes.filter(box=>!box.locked&&!findZone(box.warehouseId,box.zoneId)?.locked&&(box.items||[]).some(item=>item.barcode===barcode.value.trim()));boxSelect.innerHTML=matches.map(box=>`<option value="${esc(box.id)}">${esc(box.id)} · ${esc(findZone(box.warehouseId,box.zoneId)?.name||box.zoneId)} · ${Number(box.items.find(item=>item.barcode===barcode.value.trim())?.quantity||0)} ед.</option>`).join('')||'<option value="">Подходящих коробок нет</option>'};barcode.oninput=update;form.onsubmit=event=>{event.preventDefault();const data=Object.fromEntries(new FormData(form)),sku=itemByBarcode(data.barcode),box=wms.boxes.find(item=>item.id===data.boxId),quantity=Number(data.quantity);if(!sku){form.querySelector('.form-error').innerHTML='<div class="error">Баркод отсутствует в номенклатуре.</div>';return}if(!box){form.querySelector('.form-error').innerHTML='<div class="error">Создайте коробку в нужной зоне и повторите операцию.</div>';return}const item=upsertBoxItem(box,sku,quantity);recordMovement('replenishment',quantity,box,item);saveWms(`Пополнение ${sku.article}: +${quantity}`);close();toast('Остаток обновлён.','success');renderInventoryTable()};barcode.focus()})
