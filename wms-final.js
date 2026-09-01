@@ -23,6 +23,7 @@
   let serverRevision=Number(localStorage.getItem(REVISION_KEY)||0);
   let syncTimer=0,pollTimer=0,syncing=false,lastSyncError='';
   let zoneDraw=false,zoneStart=null,zoneCurrent=null;
+  let zoneMoveId='',zoneMoveStart=null,zoneMoveChanged=false,zoneMenu=null,suppressZoneClickUntil=0;
   const GOOGLE_SUMMARY_SHEET_ID='1oaf7MiFLdMpOI-syYOaJEeXpIyGRLzkGkUXvlMbJroU';
   const GOOGLE_SUMMARY_GID='0';
   let sheetSummary=[],sheetSummaryError='',sheetSummaryLoading=false,sheetSummaryLoadedAt=0;
@@ -181,7 +182,8 @@
   };
 
   function inventoryView(){
-    return `<section class="wms-page"><div class="wms-page-head"><div><h2>Учет склада</h2><p>Остатки формируются из содержимого коробок.</p></div><div class="wms-actions">${currentUser?.role==='admin'||currentUser?.role==='manager'?'<button class="btn" id="add-nomenclature">+ Позиция</button><button class="btn primary" id="import-nomenclature">Импорт WB</button>':''}<button class="btn" id="stock-replenish">Пополнение</button></div></div><div class="wms-filters"><div class="quick-search"><input id="inventory-search" autocomplete="off" placeholder="Быстрый поиск: ШК, артикул, размер, зона или коробка"><div id="inventory-quick-results" class="quick-search-results" hidden></div></div><select id="inventory-warehouse"><option value="">Все склады</option>${warehouses().map(item=>`<option value="${esc(item.id)}">${esc(item.name)}</option>`).join('')}</select></div><div class="wms-table-wrap"><table class="wms-table"><thead><tr><th>ШК</th><th>Артикул</th><th>Размер</th><th>Количество</th><th>Зона</th><th>Коробка</th><th>Склад</th><th>Обновлено</th></tr></thead><tbody id="inventory-body"></tbody></table></div><div class="wms-subsection"><div class="panel-head"><div class="panel-title">Номенклатура · ${wms.nomenclature.length}</div></div><div class="nomenclature-chips">${wms.nomenclature.slice(0,80).map(item=>`<span>${esc(item.article)} · ${esc(item.barcode)} · ${esc(item.size)}</span>`).join('')||'Номенклатура не загружена'}</div></div></section>`;
+    const current=activeWarehouseId()||warehouses()[0]?.id||'';
+    return `<section class="wms-page"><div class="wms-page-head"><div><h2>Учет склада</h2><p>Только фактическое хранение в выбранном складе: зоны, коробки и остатки.</p></div><div class="wms-actions">${currentUser?.role==='admin'||currentUser?.role==='manager'?'<button class="btn" id="import-nomenclature">Импорт WB</button>':''}<button class="btn primary" id="stock-replenish">Пополнение</button></div></div><div class="inventory-warehouse-bar"><div><span>Рабочий склад</span><strong id="inventory-warehouse-name">${esc(warehouseName(current))}</strong></div><select id="inventory-warehouse">${warehouses().map(item=>`<option value="${esc(item.id)}" ${item.id===current?'selected':''}>${esc(item.name)}</option>`).join('')}</select></div><div class="wms-filters inventory-storage-filters"><div class="quick-search"><input id="inventory-search" autocomplete="off" placeholder="Поиск внутри выбранного склада: ШК, артикул, размер, зона или коробка"><div id="inventory-quick-results" class="quick-search-results" hidden></div></div></div><div class="wms-table-wrap"><table class="wms-table"><thead><tr><th>ШК</th><th>Артикул</th><th>Размер</th><th>Количество</th><th>Зона</th><th>Коробка</th><th>Обновлено</th></tr></thead><tbody id="inventory-body"></tbody></table></div></section>`;
   }
 
   function accountView(){return `<section class="wms-page"><div class="wms-page-head"><div><h2>Сотрудники</h2><p>Учетные записи и роли хранятся на сервере.</p></div><button class="btn primary" id="add-user">+ Добавить сотрудника</button></div><div id="users-content">${backendAvailable?'Загрузка…':empty('Добавление пользователей доступно при подключении к серверу.')}</div><div class="wms-subsection"><div class="panel-head"><div class="panel-title">Журнал системы</div><button class="btn" id="export-data">Экспорт данных</button></div><div id="audit-content">${backendAvailable?'Загрузка…':'Нет соединения с сервером'}</div></div></section>`}
@@ -204,28 +206,43 @@
     bindInventory();bindAccount();bindTransfers();bindRevisions();bindTasks();
   };
 
+  function inventoryWarehouseId(){
+    return document.getElementById('inventory-warehouse')?.value||activeWarehouseId()||warehouses()[0]?.id||'';
+  }
+  function inventoryWarehouseRows(){
+    const warehouseId=inventoryWarehouseId();
+    return inventoryRows().filter(row=>row.box.warehouseId===warehouseId);
+  }
   function renderInventoryTable(){
-    const body=document.getElementById('inventory-body');if(!body)return;const query=(document.getElementById('inventory-search')?.value||'').trim().toLowerCase(),warehouse=document.getElementById('inventory-warehouse')?.value||'';
-    const rows=inventoryRows().filter(row=>(!warehouse||row.box.warehouseId===warehouse)&&(!query||[row.item.barcode,row.item.article,row.item.size,row.zone,row.box.id,row.warehouse].some(value=>String(value||'').toLowerCase().includes(query))));
-    body.innerHTML=rows.length?rows.map(row=>`<tr><td>${esc(row.item.barcode)}</td><td><b>${esc(row.item.article)}</b></td><td>${esc(row.item.size)}</td><td><b>${Number(row.item.quantity||0)}</b></td><td>${esc(row.zone)}</td><td><button class="table-link" data-open-box="${esc(row.box.id)}">${esc(row.box.id)}</button></td><td>${esc(row.warehouse)}</td><td>${dateText(row.box.updatedAt)}</td></tr>`).join(''):`<tr><td colspan="8">${empty('Остатков по выбранным условиям нет')}</td></tr>`;
+    const body=document.getElementById('inventory-body');if(!body)return;
+    const query=(document.getElementById('inventory-search')?.value||'').trim().toLowerCase();
+    const rows=inventoryWarehouseRows().filter(row=>!query||[row.item.barcode,row.item.article,row.item.size,row.zone,row.box.id].some(value=>String(value||'').toLowerCase().includes(query)));
+    body.innerHTML=rows.length?rows.map(row=>`<tr><td>${esc(row.item.barcode)}</td><td><b>${esc(row.item.article)}</b></td><td>${esc(row.item.size)}</td><td><b>${Number(row.item.quantity||0)}</b></td><td>${esc(row.zone)}</td><td><button class="table-link" data-open-box="${esc(row.box.id)}">${esc(row.box.id)}</button></td><td>${dateText(row.box.updatedAt)}</td></tr>`).join(''):`<tr><td colspan="7">${empty('На выбранном складе нет остатков по этим условиям')}</td></tr>`;
     body.querySelectorAll('[data-open-box]').forEach(button=>button.onclick=()=>openBox(button.dataset.openBox));
   }
-  function skuStockRows(sku){
-    return inventoryRows().filter(row=>row.item.barcode===sku.barcode);
+  function skuStockRows(sku,warehouseId=''){
+    return inventoryRows().filter(row=>row.item.barcode===sku.barcode&&(!warehouseId||row.box.warehouseId===warehouseId));
   }
-  function openSkuQuickView(sku){
-    const rows=skuStockRows(sku),total=rows.reduce((sum,row)=>sum+Number(row.item.quantity||0),0);
-    openModal(`${sku.article} · ${sku.size}`,`<div class="quick-sku-head"><span class="status-pill ${total?'':'muted'}">${total?total+' ед. на складе':'Нет остатка'}</span><p>ШК: ${esc(sku.barcode)}</p></div><div class="wms-table-wrap"><table class="wms-table"><thead><tr><th>Склад</th><th>Зона</th><th>Коробка</th><th>Остаток</th></tr></thead><tbody>${rows.length?rows.map(row=>`<tr><td>${esc(row.warehouse)}</td><td>${esc(row.zone)}</td><td><button type="button" class="table-link" data-quick-box="${esc(row.box.id)}">${esc(row.box.id)}</button></td><td><b>${Number(row.item.quantity||0)}</b></td></tr>`).join(''):`<tr><td colspan="4">${empty('Позиция есть в номенклатуре, но пока не размещена в коробках.')}</td></tr>`}</tbody></table></div><div class="modal-actions"><button type="button" class="btn" data-close>Закрыть</button></div>`,(modal)=>{modal.querySelectorAll('[data-quick-box]').forEach(button=>button.addEventListener('click',()=>openBox(button.dataset.quickBox)))});
+  function openSkuQuickView(sku,warehouseId=inventoryWarehouseId()){
+    const rows=skuStockRows(sku,warehouseId),total=rows.reduce((sum,row)=>sum+Number(row.item.quantity||0),0);
+    openModal(`${sku.article} · ${sku.size}`,`<div class="quick-sku-head"><span class="status-pill ${total?'':'muted'}">${total?total+' ед.':'Нет остатка'}</span><p>${esc(warehouseName(warehouseId))} · ШК: ${esc(sku.barcode)}</p></div><div class="wms-table-wrap"><table class="wms-table"><thead><tr><th>Зона</th><th>Коробка</th><th>Остаток</th></tr></thead><tbody>${rows.length?rows.map(row=>`<tr><td>${esc(row.zone)}</td><td><button type="button" class="table-link" data-quick-box="${esc(row.box.id)}">${esc(row.box.id)}</button></td><td><b>${Number(row.item.quantity||0)}</b></td></tr>`).join(''):`<tr><td colspan="3">${empty('На этом складе позиция не хранится.')}</td></tr>`}</tbody></table></div><div class="modal-actions"><button type="button" class="btn" data-close>Закрыть</button></div>`,(modal)=>{modal.querySelectorAll('[data-quick-box]').forEach(button=>button.addEventListener('click',()=>openBox(button.dataset.quickBox)))});
   }
   function renderInventoryQuickSearch(){
     const input=document.getElementById('inventory-search'),host=document.getElementById('inventory-quick-results');
     if(!input||!host)return;
     const query=input.value.trim().toLowerCase();
     if(query.length<2){host.hidden=true;host.innerHTML='';return}
-    const results=wms.nomenclature.filter(item=>[item.article,item.barcode,item.size].some(value=>String(value||'').toLowerCase().includes(query))).slice(0,12);
-    host.innerHTML=results.length?results.map(item=>{const rows=skuStockRows(item),qty=rows.reduce((sum,row)=>sum+Number(row.item.quantity||0),0),locations=[...new Set(rows.map(row=>`${row.warehouse} · ${row.zone}`))].slice(0,2);return `<button type="button" class="quick-search-item" data-quick-sku="${esc(item.id)}"><span><b>${esc(item.article)}</b><small>${esc(item.barcode)} · размер ${esc(item.size)}</small></span><span class="quick-search-stock ${qty?'':'empty'}">${qty?qty+' ед.':'нет остатка'}<small>${locations.map(esc).join(' / ')||'Номенклатура'}</small></span></button>`}).join(''):`<div class="quick-search-empty">Ничего не найдено</div>`;
+    const warehouseId=inventoryWarehouseId();
+    const groups=new Map();
+    inventoryWarehouseRows().forEach(row=>{
+      const key=row.item.barcode;
+      const current=groups.get(key)||{sku:{id:key,article:row.item.article,barcode:row.item.barcode,size:row.item.size},qty:0,zones:new Set(),boxes:new Set()};
+      current.qty+=Number(row.item.quantity||0);current.zones.add(row.zone);current.boxes.add(row.box.id);groups.set(key,current);
+    });
+    const results=[...groups.values()].filter(group=>[group.sku.article,group.sku.barcode,group.sku.size,...group.zones,...group.boxes].some(value=>String(value||'').toLowerCase().includes(query))).slice(0,12);
+    host.innerHTML=results.length?results.map(group=>`<button type="button" class="quick-search-item" data-quick-barcode="${esc(group.sku.barcode)}"><span><b>${esc(group.sku.article)}</b><small>${esc(group.sku.barcode)} · размер ${esc(group.sku.size)}</small></span><span class="quick-search-stock">${group.qty} ед.<small>${[...group.zones].slice(0,2).map(esc).join(' / ')} · ${group.boxes.size} кор.</small></span></button>`).join(''):`<div class="quick-search-empty">На выбранном складе ничего не найдено</div>`;
     host.hidden=false;
-    host.querySelectorAll('[data-quick-sku]').forEach(button=>button.addEventListener('click',()=>{const sku=wms.nomenclature.find(item=>item.id===button.dataset.quickSku);host.hidden=true;if(sku)openSkuQuickView(sku)}));
+    host.querySelectorAll('[data-quick-barcode]').forEach(button=>button.addEventListener('click',()=>{const item=inventoryWarehouseRows().find(row=>row.item.barcode===button.dataset.quickBarcode)?.item;host.hidden=true;if(item)openSkuQuickView(item,warehouseId)}));
   }
   function bindInventory(){
     const search=document.getElementById('inventory-search'),warehouse=document.getElementById('inventory-warehouse');
@@ -233,14 +250,21 @@
       search.oninput=()=>{renderInventoryTable();renderInventoryQuickSearch()};
       search.onfocus=renderInventoryQuickSearch;
       search.onblur=()=>setTimeout(()=>{const host=document.getElementById('inventory-quick-results');if(host)host.hidden=true},140);
-      warehouse.onchange=()=>{renderInventoryTable();renderInventoryQuickSearch()};
       document.getElementById('inventory-quick-results')?.addEventListener('mousedown',event=>event.preventDefault());
-      renderInventoryTable();
     }
-    document.getElementById('add-nomenclature')?.addEventListener('click',openNomenclatureForm);
+    if(warehouse){
+      warehouse.onchange=()=>{
+        localStorage.setItem(ACTIVE_WAREHOUSE_KEY,warehouse.value);
+        const name=document.getElementById('inventory-warehouse-name');if(name)name.textContent=warehouseName(warehouse.value);
+        if(search)search.value='';
+        renderInventoryTable();renderInventoryQuickSearch();
+      };
+    }
+    renderInventoryTable();
     document.getElementById('import-nomenclature')?.addEventListener('click',openImport);
     document.getElementById('stock-replenish')?.addEventListener('click',openReplenishment);
   }
+
   function openNomenclatureForm(){
     openModal('Новая позиция',`<form class="wms-form" id="nomenclature-form"><label>Артикул<input name="article" required></label><label>Баркод<input name="barcode" required inputmode="numeric"></label><label>Размер<input name="size" required></label><div class="modal-actions"><button type="button" class="btn" data-close>Отмена</button><button class="btn primary">Сохранить</button></div></form>`,(modal,close)=>{modal.querySelector('form').onsubmit=event=>{event.preventDefault();const data=Object.fromEntries(new FormData(event.currentTarget));if(wms.nomenclature.some(item=>item.barcode===data.barcode)){toast('Такой баркод уже существует.','warning');return}wms.nomenclature.push({id:uid('SKU'),article:data.article.trim(),barcode:data.barcode.trim(),size:data.size.trim(),updatedAt:new Date().toISOString()});saveWms(`Добавлена номенклатура ${data.article}`);close();window.render()}});
   }
@@ -369,7 +393,7 @@
       const edit=zone.w>=90&&zone.h>=55?`<g class="zone-map-edit" data-edit-zone-map="${esc(zone.id)}" transform="translate(${zone.x+zone.w-34} ${zone.y+8})"><rect width="26" height="22" rx="6"/><text x="13" y="15" text-anchor="middle">✎</text></g>`:'';
       const markersAllowed=zone.w>=76&&zone.h>=72;
       const markers=markersAllowed?boxes.slice(0,18).map((box,index)=>{const col=index%6,row=Math.floor(index/6);return `<circle class="box-dot" data-box-id="${esc(box.id)}" cx="${zone.x+18+col*18}" cy="${zone.y+zone.h-16-row*18}" r="6"><title>${esc(box.id)} · ${boxQuantity(box)} ед.</title></circle>`}).join(''):'';
-      return `<g class="wms-zone ${zone.locked?'locked':''}" data-zone-id="${esc(zone.id)}"><rect class="zone-body" x="${zone.x}" y="${zone.y}" width="${zone.w}" height="${zone.h}" rx="8"/><title>${esc(zone.name)} · ${count} кор. · лимит ${Number(zone.capacity||0)||'∞'}</title>${zoneLabelSvg(zone,count,zoneIndex)}${edit}${markers}</g>`;
+      return `<g class="wms-zone ${zone.locked?'locked':''} ${zone.frozen?'frozen':''} ${zoneMoveId===zone.id?'move-enabled':''}" data-zone-id="${esc(zone.id)}"><rect class="zone-body" x="${zone.x}" y="${zone.y}" width="${zone.w}" height="${zone.h}" rx="8"/><title>${esc(zone.name)} · ${count} кор. · лимит ${Number(zone.capacity||0)||'∞'}</title>${zoneLabelSvg(zone,count,zoneIndex)}${edit}${markers}</g>`;
     }).join('');
   }
   window.renderObjects=function(objects){return originalRenderObjects(objects)+zonesSvg()};
@@ -381,36 +405,127 @@
     const b=publishedBoundsLocal();if(!b||rect.w<20||rect.h<20||rect.x<b.minX||rect.y<b.minY||rect.x+rect.w>b.maxX||rect.y+rect.h>b.maxY)return false;
     return !zones.some(zone=>zone.id!==ignoreId&&rect.x<zone.x+zone.w&&rect.x+rect.w>zone.x&&rect.y<zone.y+zone.h&&rect.y+rect.h>zone.y);
   }
+  function zoneGridStep(){
+    return Math.max(1,(Number(draft?.grid)||0.5)/SCALE);
+  }
+  function snapZonePoint(point,align=true){
+    const step=zoneGridStep();
+    let x=Math.round(point.x/step)*step,y=Math.round(point.y/step)*step;
+    if(align){
+      const threshold=Math.min(step*.65,8);
+      const xs=[],ys=[];
+      zones.forEach(zone=>{xs.push(zone.x,zone.x+zone.w);ys.push(zone.y,zone.y+zone.h)});
+      xs.forEach(value=>{if(Math.abs(x-value)<=threshold)x=value});
+      ys.forEach(value=>{if(Math.abs(y-value)<=threshold)y=value});
+    }
+    return {x,y};
+  }
+  function snapZonePosition(zone,x,y){
+    const step=zoneGridStep(),threshold=Math.min(step*.65,8);
+    let nx=Math.round(x/step)*step,ny=Math.round(y/step)*step;
+    const xCandidates=[],yCandidates=[];
+    zones.filter(item=>item.id!==zone.id).forEach(item=>{
+      xCandidates.push(item.x,item.x+item.w,item.x-zone.w,item.x+item.w-zone.w);
+      yCandidates.push(item.y,item.y+item.h,item.y-zone.h,item.y+item.h-zone.h);
+    });
+    xCandidates.forEach(value=>{if(Math.abs(nx-value)<=threshold)nx=value});
+    yCandidates.forEach(value=>{if(Math.abs(ny-value)<=threshold)ny=value});
+    return {x:nx,y:ny};
+  }
+  function closeZoneMenu(){
+    zoneMenu?.remove();zoneMenu=null;
+  }
+  function setZoneFrozen(zone,frozen){
+    zone.frozen=!!frozen;
+    if(zone.frozen&&zoneMoveId===zone.id)zoneMoveId='';
+    persist();
+    saveWms(`${zone.frozen?'Заморожена':'Разморожена'} зона ${zone.name}`);
+    render();
+  }
+  function openZoneActionMenu(zone,event){
+    closeZoneMenu();
+    const menu=document.createElement('div');
+    menu.className='zone-action-menu';
+    menu.innerHTML=`<div class="zone-action-title"><b>${esc(zone.name)}</b><small>${zone.frozen?'Зафиксирована':'Можно перемещать'}</small></div><button type="button" data-zone-menu="open">Открыть зону</button><button type="button" data-zone-menu="move" ${zone.frozen?'disabled':''}>Переместить</button><button type="button" data-zone-menu="freeze">${zone.frozen?'Разморозить':'Заморозить'}</button>`;
+    document.body.appendChild(menu);
+    const rect=menu.getBoundingClientRect();
+    menu.style.left=`${Math.max(8,Math.min(window.innerWidth-rect.width-8,event.clientX+8))}px`;
+    menu.style.top=`${Math.max(8,Math.min(window.innerHeight-rect.height-8,event.clientY+8))}px`;
+    menu.querySelector('[data-zone-menu="open"]').onclick=()=>{closeZoneMenu();openZoneForm(zone)};
+    menu.querySelector('[data-zone-menu="move"]').onclick=()=>{if(zone.frozen)return;zoneMoveId=zone.id;closeZoneMenu();render();toast('Зона готова к перемещению. Зажмите ЛКМ на зоне и двигайте её.','info')};
+    menu.querySelector('[data-zone-menu="freeze"]').onclick=()=>{closeZoneMenu();setZoneFrozen(zone,!zone.frozen)};
+    zoneMenu=menu;
+  }
+  document.addEventListener('pointerdown',event=>{
+    if(zoneMenu&&!event.target.closest('.zone-action-menu')&&!event.target.closest('[data-zone-id]'))closeZoneMenu();
+  },true);
+  document.addEventListener('keydown',event=>{if(event.key==='Escape'){closeZoneMenu();if(zoneMoveId){zoneMoveId='';render()}}});
+
   function showZonePreview(){
-    const svg=document.getElementById('warehouse-svg');if(!svg||!zoneStart||!zoneCurrent)return;svg.querySelector('#wms-zone-preview')?.remove();const rect=document.createElementNS('http://www.w3.org/2000/svg','rect');rect.id='wms-zone-preview';rect.setAttribute('class','wms-zone-preview');rect.setAttribute('x',Math.min(zoneStart.x,zoneCurrent.x));rect.setAttribute('y',Math.min(zoneStart.y,zoneCurrent.y));rect.setAttribute('width',Math.abs(zoneCurrent.x-zoneStart.x));rect.setAttribute('height',Math.abs(zoneCurrent.y-zoneStart.y));svg.appendChild(rect);
+    const svg=document.getElementById('warehouse-svg');if(!svg||!zoneStart||!zoneCurrent)return;
+    svg.querySelector('#wms-zone-preview-group')?.remove();
+    const x=Math.min(zoneStart.x,zoneCurrent.x),y=Math.min(zoneStart.y,zoneCurrent.y),width=Math.abs(zoneCurrent.x-zoneStart.x),height=Math.abs(zoneCurrent.y-zoneStart.y);
+    const ns='http://www.w3.org/2000/svg',group=document.createElementNS(ns,'g');group.id='wms-zone-preview-group';
+    const rect=document.createElementNS(ns,'rect');rect.setAttribute('class','wms-zone-preview');rect.setAttribute('x',x);rect.setAttribute('y',y);rect.setAttribute('width',width);rect.setAttribute('height',height);rect.setAttribute('rx','7');group.appendChild(rect);
+    if(width>=28&&height>=22){
+      const label=`${(width*SCALE).toFixed(1)} × ${(height*SCALE).toFixed(1)} м`;
+      const labelWidth=Math.max(76,label.length*6.4+18),cx=x+width/2,cy=y+height/2;
+      const badge=document.createElementNS(ns,'rect');badge.setAttribute('class','zone-preview-badge');badge.setAttribute('x',cx-labelWidth/2);badge.setAttribute('y',cy-13);badge.setAttribute('width',labelWidth);badge.setAttribute('height','26');badge.setAttribute('rx','8');group.appendChild(badge);
+      const text=document.createElementNS(ns,'text');text.setAttribute('class','zone-preview-size');text.setAttribute('x',cx);text.setAttribute('y',cy+4);text.setAttribute('text-anchor','middle');text.textContent=label;group.appendChild(text);
+    }
+    svg.appendChild(group);
   }
   window.onPointerDown=function(event){
-    if(workspaceMode==='management'&&zoneDraw&&event.button===0){event.preventDefault();zoneStart=floorPoint(event);zoneCurrent={...zoneStart};pointerAction='wms-zone';event.currentTarget.setPointerCapture(event.pointerId);showZonePreview();return}
-    // In the published/management view the legacy editor treats every left
-    // pointerdown as camera pan. Do not start pan when the user presses an
-    // interactive WMS entity; allow the following click event to open it.
-    if(workspaceMode==='management'&&event.button===0&&event.target.closest?.('[data-zone-id],[data-box-id]')){
-      pointerAction=null;
-      return;
+    if(workspaceMode==='management'&&zoneDraw&&event.button===0){
+      event.preventDefault();closeZoneMenu();zoneStart=snapZonePoint(floorPoint(event));zoneCurrent={...zoneStart};pointerAction='wms-zone';event.currentTarget.setPointerCapture(event.pointerId);showZonePreview();return
     }
+    const zoneNode=event.target.closest?.('[data-zone-id]');
+    if(workspaceMode==='management'&&zoneMoveId&&event.button===0&&zoneNode?.dataset.zoneId===zoneMoveId&&!event.target.closest?.('[data-box-id],[data-edit-zone-map]')){
+      const zone=zones.find(item=>item.id===zoneMoveId);
+      if(zone&&!zone.frozen){
+        event.preventDefault();closeZoneMenu();const p=floorPoint(event);zoneMoveStart={pointer:p,x:zone.x,y:zone.y};zoneMoveChanged=false;pointerAction='wms-zone-move';event.currentTarget.classList.add('zone-moving');event.currentTarget.setPointerCapture(event.pointerId);return
+      }
+    }
+    // Interactive WMS entities must not accidentally start camera pan.
+    if(workspaceMode==='management'&&event.button===0&&event.target.closest?.('[data-zone-id],[data-box-id]')){pointerAction=null;return}
     return originalPointerDown(event);
   };
-  window.onPointerMove=function(event){if(pointerAction==='wms-zone'){zoneCurrent=floorPoint(event);showZonePreview();return}return originalPointerMove(event)};
+  window.onPointerMove=function(event){
+    if(pointerAction==='wms-zone'){zoneCurrent=snapZonePoint(floorPoint(event));showZonePreview();return}
+    if(pointerAction==='wms-zone-move'){
+      const zone=zones.find(item=>item.id===zoneMoveId);if(!zone||!zoneMoveStart)return;
+      const p=floorPoint(event),next=snapZonePosition(zone,zoneMoveStart.x+(p.x-zoneMoveStart.pointer.x),zoneMoveStart.y+(p.y-zoneMoveStart.pointer.y));
+      const candidate={x:next.x,y:next.y,w:zone.w,h:zone.h};
+      if(validZone(candidate,zone.id)){zone.x=next.x;zone.y=next.y;zoneMoveChanged=true;updateCanvas()}
+      return;
+    }
+    return originalPointerMove(event)
+  };
   window.onPointerUp=function(event){
-    if(pointerAction!=='wms-zone')return originalPointerUp(event);
-    const rect={x:Math.min(zoneStart.x,zoneCurrent.x),y:Math.min(zoneStart.y,zoneCurrent.y),w:Math.abs(zoneCurrent.x-zoneStart.x),h:Math.abs(zoneCurrent.y-zoneStart.y)};pointerAction=null;zoneDraw=false;zoneStart=null;zoneCurrent=null;try{event.currentTarget.releasePointerCapture(event.pointerId)}catch(_){}
-    if(!validZone(rect)){toast('Зона должна быть внутри склада, не пересекать другие зоны и иметь размер не менее 1×1 м.','warning');render();return}
-    openZoneForm(null,rect);render();
+    if(pointerAction==='wms-zone'){
+      const rect={x:Math.min(zoneStart.x,zoneCurrent.x),y:Math.min(zoneStart.y,zoneCurrent.y),w:Math.abs(zoneCurrent.x-zoneStart.x),h:Math.abs(zoneCurrent.y-zoneStart.y)};
+      pointerAction=null;zoneDraw=false;zoneStart=null;zoneCurrent=null;try{event.currentTarget.releasePointerCapture(event.pointerId)}catch(_){}
+      if(!validZone(rect)){toast('Зона должна быть внутри склада, не пересекать другие зоны и иметь размер не менее 1×1 м.','warning');render();return}
+      openZoneForm(null,rect);render();return;
+    }
+    if(pointerAction==='wms-zone-move'){
+      const zone=zones.find(item=>item.id===zoneMoveId);
+      pointerAction=null;event.currentTarget.classList.remove('zone-moving');try{event.currentTarget.releasePointerCapture(event.pointerId)}catch(_){}
+      if(zoneMoveChanged&&zone){persist();saveWms(`Перемещена зона ${zone.name}`);suppressZoneClickUntil=Date.now()+250}
+      zoneMoveStart=null;zoneMoveChanged=false;updateCanvas();return;
+    }
+    return originalPointerUp(event);
   };
   window.onFloorClick=function(event){
+    if(Date.now()<suppressZoneClickUntil){event.preventDefault();event.stopPropagation();return}
     const boxNode=event.target.closest?.('[data-box-id]');if(boxNode){event.preventDefault();event.stopPropagation();openBox(boxNode.dataset.boxId);return}
     const editZoneNode=event.target.closest?.('[data-edit-zone-map]');if(editZoneNode){event.preventDefault();event.stopPropagation();openZoneForm(zones.find(zone=>zone.id===editZoneNode.dataset.editZoneMap));return}
-    const zoneNode=event.target.closest?.('[data-zone-id]');if(zoneNode){event.preventDefault();event.stopPropagation();openZoneForm(zones.find(zone=>zone.id===zoneNode.dataset.zoneId));return}
+    const zoneNode=event.target.closest?.('[data-zone-id]');if(zoneNode){event.preventDefault();event.stopPropagation();const zone=zones.find(item=>item.id===zoneNode.dataset.zoneId);if(zone)openZoneActionMenu(zone,event);return}
     return originalFloorClick(event);
   };
   window.bindWorkspace=function(){
     originalBindWorkspace();
-    document.getElementById('wms-add-zone')?.addEventListener('click',()=>{zoneDraw=!zoneDraw;const button=document.getElementById('wms-add-zone');button.classList.toggle('primary',zoneDraw);button.textContent=zoneDraw?'Проведите по плану…':'+ Нарисовать зону';document.getElementById('floor')?.classList.toggle('zone-drawing',zoneDraw)});
+    document.getElementById('wms-add-zone')?.addEventListener('click',()=>{zoneDraw=!zoneDraw;zoneMoveId='';closeZoneMenu();const button=document.getElementById('wms-add-zone');button.classList.toggle('primary',zoneDraw);button.textContent=zoneDraw?'Рисуйте зону · шаг 0,5 м':'+ Нарисовать зону';document.getElementById('floor')?.classList.toggle('zone-drawing',zoneDraw)});
     document.querySelectorAll('[data-open-zone]').forEach(button=>button.onclick=()=>openZoneForm(zones.find(zone=>zone.id===button.dataset.openZone)));
     document.querySelectorAll('[data-edit-zone]').forEach(button=>button.onclick=()=>openZoneForm(zones.find(zone=>zone.id===button.dataset.editZone)));
   };
