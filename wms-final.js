@@ -595,8 +595,16 @@
 
   window.managementPanel=function(){
     if(workspaceMode!=='management')return originalManagementPanel();
-    const canEdit=['admin','manager'].includes(currentUser?.role||'admin');
-    return `<div class="stage-indicator"><span class="stage-number">✓</span><div><b>Рабочая схема</b><small>Опубликованная версия</small></div></div><p class="hint">Зоны и коробки доступны всем сотрудникам. Изменять схему могут администратор и менеджер.</p>${canEdit?'<button class="btn primary wide" id="edit-copy">Создать копию для редактирования</button>':''}<div class="object-section"><div class="panel-title">Зоны хранения · ${zones.length}</div><p class="hint">Нарисуйте прямоугольник внутри склада. Затем задайте название и вместимость.</p>${canEdit?'<button class="btn wide" id="wms-add-zone">+ Нарисовать зону</button>':''}<div class="zone-side-list">${zones.map(zone=>`<div class="zone-side-item"><button class="zone-side-main" data-open-zone="${esc(zone.id)}"><span>${esc(zone.name)}</span><small>${wms.boxes.filter(box=>box.warehouseId===activeWarehouseId()&&box.zoneId===zone.id).length} кор.</small></button>${canEdit?`<button type="button" class="zone-side-edit" data-edit-zone="${esc(zone.id)}" title="Редактировать зону">Редактировать зону</button>`:''}</div>`).join('')||'<small>Зон пока нет</small>'}</div></div><div class="object-section"><div class="panel-title">Версии</div><div class="version-list">${versions.length?versions.slice().reverse().map(v=>`<div><b>v${v.version}</b><span>${esc(v.date)}</span></div>`).join(''):'Нет сохранённых версий'}</div></div>`;
+    const canLayout=can('layout_manage'),canZones=can('zones_manage');
+    return `<div class="stage-indicator"><span class="stage-number">✓</span><div><b>Рабочая схема</b><small>Опубликованная версия</small></div></div>
+      <p class="hint">${canLayout||canZones?'Доступ на изменение определяется персональными правами сотрудника.':'Режим просмотра: изменение планировки и зон для вашей учетной записи отключено.'}</p>
+      ${canLayout?'<button class="btn primary wide" id="edit-copy">Создать копию для редактирования</button>':''}
+      <div class="object-section"><div class="panel-title">Зоны хранения · ${zones.length}</div>
+        <p class="hint">${canZones?'Можно создавать и редактировать зоны хранения.':'Зоны доступны только для просмотра.'}</p>
+        ${canZones?'<button class="btn wide" id="wms-add-zone">+ Нарисовать зону</button>':''}
+        <div class="zone-side-list">${zones.map(zone=>`<div class="zone-side-item"><button class="zone-side-main" data-open-zone="${esc(zone.id)}"><span>${esc(zone.name)}</span><small>${wms.boxes.filter(box=>box.warehouseId===activeWarehouseId()&&box.zoneId===zone.id).length} кор.</small></button>${canZones?`<button type="button" class="zone-side-edit" data-edit-zone="${esc(zone.id)}" title="Редактировать зону">Редактировать зону</button>`:''}</div>`).join('')||'<small>Зон пока нет</small>'}</div>
+      </div>
+      <div class="object-section"><div class="panel-title">Версии</div><div class="version-list">${versions.length?versions.slice().reverse().map(v=>`<div><b>v${v.version}</b><span>${esc(v.date)}</span></div>`).join(''):'Нет сохранённых версий'}</div></div>`;
   };
   function shortenZoneName(name,maxChars){
     const value=String(name||'Зона').trim()||'Зона';
@@ -685,6 +693,7 @@
     if(zone&&geometry)Object.assign(zone,geometry);
   }
   function startZoneEdit(zone){
+    if(!requireClientPermission('zones_manage','У вас нет доступа к редактированию зон.'))return;
     if(!zone||zone.frozen)return;
     if(zoneMoveId&&zoneMoveId!==zone.id){
       toast('Сначала сохраните или отмените изменения текущей зоны.','warning');
@@ -721,6 +730,7 @@
     toast('Изменения зоны отменены.','info');
   }
   function setZoneFrozen(zone,frozen){
+    if(!requireClientPermission('zones_manage','У вас нет доступа к изменению зон.'))return;
     if(zoneMoveId===zone.id){
       toast('Сначала сохраните или отмените редактирование зоны.','warning');
       return;
@@ -736,12 +746,14 @@
       toast('Сначала сохраните или отмените изменения редактируемой зоны.','warning');
       return;
     }
-    const editing=zoneMoveId===zone.id;
+    const editing=zoneMoveId===zone.id,canZones=can('zones_manage');
     const menu=document.createElement('div');
     menu.className='zone-action-menu';
-    menu.innerHTML=editing
-      ? `<div class="zone-action-title"><b>${esc(zone.name)}</b><small>Редактирование активно${zoneEditDirty?' · есть изменения':''}</small></div><button type="button" class="zone-action-save" data-zone-menu="save">Сохранить изменения</button><button type="button" data-zone-menu="cancel">Отменить изменения</button>`
-      : `<div class="zone-action-title"><b>${esc(zone.name)}</b><small>${zone.frozen?'Зафиксирована':'Готова к работе'}</small></div><button type="button" data-zone-menu="open">Открыть зону</button><button type="button" data-zone-menu="edit" ${zone.frozen?'disabled':''}>Редактировать зону</button><button type="button" data-zone-menu="freeze">${zone.frozen?'Разморозить':'Заморозить'}</button>`;
+    if(editing&&canZones){
+      menu.innerHTML=`<div class="zone-action-title"><b>${esc(zone.name)}</b><small>Редактирование активно${zoneEditDirty?' · есть изменения':''}</small></div><button type="button" class="zone-action-save" data-zone-menu="save">Сохранить изменения</button><button type="button" data-zone-menu="cancel">Отменить изменения</button>`;
+    }else{
+      menu.innerHTML=`<div class="zone-action-title"><b>${esc(zone.name)}</b><small>${canZones?(zone.frozen?'Зафиксирована':'Готова к работе'):'Только просмотр'}</small></div><button type="button" data-zone-menu="open">Открыть зону</button>${canZones?`<button type="button" data-zone-menu="edit" ${zone.frozen?'disabled':''}>Редактировать зону</button><button type="button" data-zone-menu="freeze">${zone.frozen?'Разморозить':'Заморозить'}</button>`:''}`;
+    }
     document.body.appendChild(menu);
     const rect=menu.getBoundingClientRect();
     menu.style.left=`${Math.max(8,Math.min(window.innerWidth-rect.width-8,event.clientX+8))}px`;
@@ -935,12 +947,22 @@
   };
   window.bindWorkspace=function(){
     originalBindWorkspace();
+
+    const canLayout=can('layout_manage'),canZones=can('zones_manage');
+    ['new-warehouse','rename-warehouse','delete-warehouse','edit-copy','warehouse-size','clear-draft','to-objects','back-to-walls','save-design','change-layout'].forEach(id=>{
+      const element=document.getElementById(id);if(element&&!canLayout){element.disabled=true;element.hidden=true}
+    });
+    if(!canLayout){
+      document.querySelectorAll('[data-tool],[data-object-tool],[data-object-select]').forEach(element=>{element.disabled=true;element.hidden=true});
+    }
+
     document.getElementById('wms-add-zone')?.addEventListener('click',()=>{
+      if(!requireClientPermission('zones_manage','У вас нет доступа к созданию зон.'))return;
       if(zoneMoveId){toast('Сначала сохраните или отмените редактирование зоны.','warning');return}
       zoneDraw=!zoneDraw;closeZoneMenu();const button=document.getElementById('wms-add-zone');button.classList.toggle('primary',zoneDraw);button.textContent=zoneDraw?'Рисуйте зону · шаг 0,5 м':'+ Нарисовать зону';document.getElementById('floor')?.classList.toggle('zone-drawing',zoneDraw)
     });
     document.querySelectorAll('[data-open-zone]').forEach(button=>button.onclick=()=>{if(zoneMoveId){toast('Сначала сохраните или отмените редактирование зоны.','warning');return}openZoneForm(zones.find(zone=>zone.id===button.dataset.openZone))});
-    document.querySelectorAll('[data-edit-zone]').forEach(button=>button.onclick=()=>startZoneEdit(zones.find(zone=>zone.id===button.dataset.editZone)));
+    document.querySelectorAll('[data-edit-zone]').forEach(button=>button.onclick=()=>{if(canZones)startZoneEdit(zones.find(zone=>zone.id===button.dataset.editZone))});
   };
   function openZoneForm(zone,rect){
     const value=zone||rect;
