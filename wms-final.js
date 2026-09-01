@@ -332,10 +332,45 @@
     const canEdit=['admin','manager'].includes(currentUser?.role||'admin');
     return `<div class="stage-indicator"><span class="stage-number">✓</span><div><b>Рабочая схема</b><small>Опубликованная версия</small></div></div><p class="hint">Зоны и коробки доступны всем сотрудникам. Изменять схему могут администратор и менеджер.</p>${canEdit?'<button class="btn primary wide" id="edit-copy">Создать копию для редактирования</button>':''}<div class="object-section"><div class="panel-title">Зоны хранения · ${zones.length}</div><p class="hint">Нарисуйте прямоугольник внутри склада. Затем задайте название и вместимость.</p>${canEdit?'<button class="btn wide" id="wms-add-zone">+ Нарисовать зону</button>':''}<div class="zone-side-list">${zones.map(zone=>`<div class="zone-side-item"><button class="zone-side-main" data-open-zone="${esc(zone.id)}"><span>${esc(zone.name)}</span><small>${wms.boxes.filter(box=>box.warehouseId===activeWarehouseId()&&box.zoneId===zone.id).length} кор.</small></button>${canEdit?`<button type="button" class="zone-side-edit" data-edit-zone="${esc(zone.id)}" title="Редактировать зону">Изменить</button>`:''}</div>`).join('')||'<small>Зон пока нет</small>'}</div></div><div class="object-section"><div class="panel-title">Версии</div><div class="version-list">${versions.length?versions.slice().reverse().map(v=>`<div><b>v${v.version}</b><span>${esc(v.date)}</span></div>`).join(''):'Нет сохранённых версий'}</div></div>`;
   };
+  function shortenZoneName(name,maxChars){
+    const value=String(name||'Зона').trim()||'Зона';
+    if(value.length<=maxChars)return value;
+    return maxChars<=4?value.slice(0,Math.max(1,maxChars)):value.slice(0,maxChars-1).trimEnd()+'…';
+  }
+  function zoneLabelSvg(zone,count,index){
+    const vertical=zone.h>zone.w*1.45&&zone.w<115;
+    const compact=!vertical&&(zone.h<72||zone.w<115);
+    const available=vertical?Math.max(36,zone.h-26):Math.max(36,zone.w-24);
+    const fontSize=compact?Math.max(9,Math.min(12,zone.h*.23)):12;
+    const charWidth=fontSize*.62;
+    const title=shortenZoneName(zone.name,Math.max(4,Math.floor(available/charWidth)));
+    const meta=`${count} кор. · лимит ${Number(zone.capacity||0)||'∞'}`;
+    const clipId=`zone-label-clip-${index}`;
+
+    if(vertical){
+      const cx=zone.x+zone.w/2,cy=zone.y+zone.h/2;
+      const showMeta=zone.h>=120&&zone.w>=48;
+      return `<defs><clipPath id="${clipId}"><rect x="${zone.x+5}" y="${zone.y+5}" width="${Math.max(1,zone.w-10)}" height="${Math.max(1,zone.h-10)}" rx="5"/></clipPath></defs><g class="zone-label zone-label-vertical" clip-path="url(#${clipId})" transform="translate(${cx} ${cy}) rotate(-90)"><text class="zone-title" x="0" y="${showMeta?-4:3}" text-anchor="middle" dominant-baseline="middle">${esc(title)}</text>${showMeta?`<text class="zone-count" x="0" y="12" text-anchor="middle" dominant-baseline="middle">${esc(meta)}</text>`:''}</g>`;
+    }
+
+    if(compact){
+      return `<defs><clipPath id="${clipId}"><rect x="${zone.x+6}" y="${zone.y+5}" width="${Math.max(1,zone.w-12)}" height="${Math.max(1,zone.h-10)}" rx="5"/></clipPath></defs><g class="zone-label zone-label-compact" clip-path="url(#${clipId})"><text class="zone-title" x="${zone.x+zone.w/2}" y="${zone.y+zone.h/2}" text-anchor="middle" dominant-baseline="middle" style="font-size:${fontSize}px">${esc(title)}</text></g>`;
+    }
+
+    const showMeta=zone.h>=76;
+    return `<defs><clipPath id="${clipId}"><rect x="${zone.x+8}" y="${zone.y+7}" width="${Math.max(1,zone.w-16)}" height="${Math.max(1,Math.min(zone.h-14,50))}" rx="5"/></clipPath></defs><g class="zone-label zone-label-standard" clip-path="url(#${clipId})"><text class="zone-title" x="${zone.x+12}" y="${zone.y+22}">${esc(title)}</text>${showMeta?`<text class="zone-count" x="${zone.x+12}" y="${zone.y+39}">${esc(meta)}</text>`:''}</g>`;
+  }
   function zonesSvg(){
     if(workspaceMode!=='management')return '';
     const warehouseId=activeWarehouseId();
-    return zones.map(zone=>{const count=wms.boxes.filter(box=>box.warehouseId===warehouseId&&box.zoneId===zone.id).length;const edit=zone.w>=90&&zone.h>=55?`<g class="zone-map-edit" data-edit-zone-map="${esc(zone.id)}" transform="translate(${zone.x+zone.w-34} ${zone.y+8})"><rect width="26" height="22" rx="6"/><text x="13" y="15" text-anchor="middle">✎</text></g>`:'';return `<g class="wms-zone ${zone.locked?'locked':''}" data-zone-id="${esc(zone.id)}"><rect x="${zone.x}" y="${zone.y}" width="${zone.w}" height="${zone.h}" rx="8"/><text x="${zone.x+12}" y="${zone.y+24}">${esc(zone.name)}</text><text class="zone-count" x="${zone.x+12}" y="${zone.y+43}">${count} кор. · лимит ${Number(zone.capacity||0)||'∞'}</text>${edit}${wms.boxes.filter(box=>box.warehouseId===warehouseId&&box.zoneId===zone.id).slice(0,18).map((box,index)=>{const col=index%6,row=Math.floor(index/6);return `<circle class="box-dot" data-box-id="${esc(box.id)}" cx="${zone.x+18+col*18}" cy="${zone.y+zone.h-16-row*18}" r="6"><title>${esc(box.id)} · ${boxQuantity(box)} ед.</title></circle>`}).join('')}</g>`}).join('');
+    return zones.map((zone,zoneIndex)=>{
+      const boxes=wms.boxes.filter(box=>box.warehouseId===warehouseId&&box.zoneId===zone.id);
+      const count=boxes.length;
+      const edit=zone.w>=90&&zone.h>=55?`<g class="zone-map-edit" data-edit-zone-map="${esc(zone.id)}" transform="translate(${zone.x+zone.w-34} ${zone.y+8})"><rect width="26" height="22" rx="6"/><text x="13" y="15" text-anchor="middle">✎</text></g>`:'';
+      const markersAllowed=zone.w>=76&&zone.h>=72;
+      const markers=markersAllowed?boxes.slice(0,18).map((box,index)=>{const col=index%6,row=Math.floor(index/6);return `<circle class="box-dot" data-box-id="${esc(box.id)}" cx="${zone.x+18+col*18}" cy="${zone.y+zone.h-16-row*18}" r="6"><title>${esc(box.id)} · ${boxQuantity(box)} ед.</title></circle>`}).join(''):'';
+      return `<g class="wms-zone ${zone.locked?'locked':''}" data-zone-id="${esc(zone.id)}"><rect class="zone-body" x="${zone.x}" y="${zone.y}" width="${zone.w}" height="${zone.h}" rx="8"/><title>${esc(zone.name)} · ${count} кор. · лимит ${Number(zone.capacity||0)||'∞'}</title>${zoneLabelSvg(zone,count,zoneIndex)}${edit}${markers}</g>`;
+    }).join('');
   }
   window.renderObjects=function(objects){return originalRenderObjects(objects)+zonesSvg()};
   function publishedBoundsLocal(){

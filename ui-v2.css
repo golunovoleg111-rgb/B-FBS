@@ -822,3 +822,56 @@ select.ui-native-select{
   .warehouse-manager-actions{grid-template-columns:1fr 1fr}
   .warehouse-manager-actions #delete-warehouse{grid-column:1/-1}
 }
+
+
+/* PR#28 — adaptive storage-zone labels */
+.wms-zone .zone-body{
+  fill:#eef0ff!important;
+  fill-opacity:.92!important;
+  stroke:#6675ef!important;
+  stroke-width:1.75!important;
+  vector-effect:non-scaling-stroke;
+}
+.wms-zone:hover .zone-body{
+  fill:#e8ebff!important;
+  stroke:#5363e5!important;
+}
+.wms-zone.locked .zone-body{
+  fill:#f0f1f4!important;
+  stroke:#8b94a4!important;
+  stroke-dasharray:6 5;
+}
+.wms-zone .zone-label{
+  pointer-events:none;
+}
+.wms-zone .zone-label text{
+  paint-order:normal!important;
+  stroke:none!important;
+  text-shadow:none!important;
+}
+.wms-zone .zone-title{
+  fill:#273250!important;
+  font-size:12px!important;
+  font-weight:760!important;
+  letter-spacing:-.015em;
+}
+.wms-zone .zone-count{
+  fill:#737d92!important;
+  font-size:8.5px!important;
+  font-weight:560!important;
+}
+.wms-zone .zone-label-compact .zone-title{
+  font-weight:740!important;
+}
+.wms-zone .zone-label-vertical .zone-title{
+  font-size:11px!important;
+}
+.wms-zone .zone-label-vertical .zone-count{
+  font-size:7.5px!important;
+}
+.wms-zone .box-dot{
+  fill:#fff!important;
+  stroke:#6675ef!important;
+  stroke-width:1!important;
+  vector-effect:non-scaling-stroke;
+}
