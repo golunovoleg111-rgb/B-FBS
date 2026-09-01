@@ -23,7 +23,7 @@
   let serverRevision=Number(localStorage.getItem(REVISION_KEY)||0);
   let syncTimer=0,pollTimer=0,syncing=false,lastSyncError='';
   let zoneDraw=false,zoneStart=null,zoneCurrent=null;
-  let zoneMoveId='',zoneMoveStart=null,zoneMoveChanged=false,zoneMenu=null,suppressZoneClickUntil=0;
+  let zoneMoveId='',zoneMoveStart=null,zoneMoveChanged=false,zoneResizeStart=null,zoneEditOriginal=null,zoneEditDirty=false,zoneMenu=null,suppressZoneClickUntil=0;
   const GOOGLE_SUMMARY_SHEET_ID='1oaf7MiFLdMpOI-syYOaJEeXpIyGRLzkGkUXvlMbJroU';
   const GOOGLE_SUMMARY_GID='0';
   let sheetSummary=[],sheetSummaryError='',sheetSummaryLoading=false,sheetSummaryLoadedAt=0;
@@ -354,7 +354,7 @@
   window.managementPanel=function(){
     if(workspaceMode!=='management')return originalManagementPanel();
     const canEdit=['admin','manager'].includes(currentUser?.role||'admin');
-    return `<div class="stage-indicator"><span class="stage-number">✓</span><div><b>Рабочая схема</b><small>Опубликованная версия</small></div></div><p class="hint">Зоны и коробки доступны всем сотрудникам. Изменять схему могут администратор и менеджер.</p>${canEdit?'<button class="btn primary wide" id="edit-copy">Создать копию для редактирования</button>':''}<div class="object-section"><div class="panel-title">Зоны хранения · ${zones.length}</div><p class="hint">Нарисуйте прямоугольник внутри склада. Затем задайте название и вместимость.</p>${canEdit?'<button class="btn wide" id="wms-add-zone">+ Нарисовать зону</button>':''}<div class="zone-side-list">${zones.map(zone=>`<div class="zone-side-item"><button class="zone-side-main" data-open-zone="${esc(zone.id)}"><span>${esc(zone.name)}</span><small>${wms.boxes.filter(box=>box.warehouseId===activeWarehouseId()&&box.zoneId===zone.id).length} кор.</small></button>${canEdit?`<button type="button" class="zone-side-edit" data-edit-zone="${esc(zone.id)}" title="Редактировать зону">Изменить</button>`:''}</div>`).join('')||'<small>Зон пока нет</small>'}</div></div><div class="object-section"><div class="panel-title">Версии</div><div class="version-list">${versions.length?versions.slice().reverse().map(v=>`<div><b>v${v.version}</b><span>${esc(v.date)}</span></div>`).join(''):'Нет сохранённых версий'}</div></div>`;
+    return `<div class="stage-indicator"><span class="stage-number">✓</span><div><b>Рабочая схема</b><small>Опубликованная версия</small></div></div><p class="hint">Зоны и коробки доступны всем сотрудникам. Изменять схему могут администратор и менеджер.</p>${canEdit?'<button class="btn primary wide" id="edit-copy">Создать копию для редактирования</button>':''}<div class="object-section"><div class="panel-title">Зоны хранения · ${zones.length}</div><p class="hint">Нарисуйте прямоугольник внутри склада. Затем задайте название и вместимость.</p>${canEdit?'<button class="btn wide" id="wms-add-zone">+ Нарисовать зону</button>':''}<div class="zone-side-list">${zones.map(zone=>`<div class="zone-side-item"><button class="zone-side-main" data-open-zone="${esc(zone.id)}"><span>${esc(zone.name)}</span><small>${wms.boxes.filter(box=>box.warehouseId===activeWarehouseId()&&box.zoneId===zone.id).length} кор.</small></button>${canEdit?`<button type="button" class="zone-side-edit" data-edit-zone="${esc(zone.id)}" title="Редактировать зону">Редактировать</button>`:''}</div>`).join('')||'<small>Зон пока нет</small>'}</div></div><div class="object-section"><div class="panel-title">Версии</div><div class="version-list">${versions.length?versions.slice().reverse().map(v=>`<div><b>v${v.version}</b><span>${esc(v.date)}</span></div>`).join(''):'Нет сохранённых версий'}</div></div>`;
   };
   function shortenZoneName(name,maxChars){
     const value=String(name||'Зона').trim()||'Зона';
@@ -393,7 +393,8 @@
       const edit='';
       const markersAllowed=zone.w>=76&&zone.h>=72;
       const markers=markersAllowed?boxes.slice(0,18).map((box,index)=>{const col=index%6,row=Math.floor(index/6);return `<circle class="box-dot" data-box-id="${esc(box.id)}" cx="${zone.x+18+col*18}" cy="${zone.y+zone.h-16-row*18}" r="6"><title>${esc(box.id)} · ${boxQuantity(box)} ед.</title></circle>`}).join(''):'';
-      return `<g class="wms-zone ${zone.locked?'locked':''} ${zone.frozen?'frozen':''} ${zoneMoveId===zone.id?'move-enabled':''}" data-zone-id="${esc(zone.id)}"><rect class="zone-body" x="${zone.x}" y="${zone.y}" width="${zone.w}" height="${zone.h}" rx="8"/><title>${esc(zone.name)} · ${count} кор. · лимит ${Number(zone.capacity||0)||'∞'}</title>${zoneLabelSvg(zone,count,zoneIndex)}${edit}${markers}</g>`;
+      const handles=zoneMoveId===zone.id?`<g class="zone-edit-handles"><circle class="zone-edit-handle nw" data-zone-resize="nw" cx="${zone.x}" cy="${zone.y}" r="7"/><circle class="zone-edit-handle ne" data-zone-resize="ne" cx="${zone.x+zone.w}" cy="${zone.y}" r="7"/><circle class="zone-edit-handle sw" data-zone-resize="sw" cx="${zone.x}" cy="${zone.y+zone.h}" r="7"/><circle class="zone-edit-handle se" data-zone-resize="se" cx="${zone.x+zone.w}" cy="${zone.y+zone.h}" r="7"/></g>`:'';
+      return `<g class="wms-zone ${zone.locked?'locked':''} ${zone.frozen?'frozen':''} ${zoneMoveId===zone.id?'move-enabled':''}" data-zone-id="${esc(zone.id)}"><rect class="zone-body" x="${zone.x}" y="${zone.y}" width="${zone.w}" height="${zone.h}" rx="8"/><title>${esc(zone.name)} · ${count} кор. · лимит ${Number(zone.capacity||0)||'∞'}</title>${zoneLabelSvg(zone,count,zoneIndex)}${edit}${markers}${handles}</g>`;
     }).join('');
   }
   window.renderObjects=function(objects){return originalRenderObjects(objects)+zonesSvg()};
@@ -408,13 +409,13 @@
   function zoneGridStep(){
     return Math.max(1,(Number(draft?.grid)||0.5)/SCALE);
   }
-  function snapZonePoint(point,align=true){
+  function snapZonePoint(point,align=true,ignoreId=''){
     const step=zoneGridStep();
     let x=Math.round(point.x/step)*step,y=Math.round(point.y/step)*step;
     if(align){
       const threshold=Math.min(step*.65,8);
       const xs=[],ys=[];
-      zones.forEach(zone=>{xs.push(zone.x,zone.x+zone.w);ys.push(zone.y,zone.y+zone.h)});
+      zones.filter(zone=>zone.id!==ignoreId).forEach(zone=>{xs.push(zone.x,zone.x+zone.w);ys.push(zone.y,zone.y+zone.h)});
       xs.forEach(value=>{if(Math.abs(x-value)<=threshold)x=value});
       ys.forEach(value=>{if(Math.abs(y-value)<=threshold)y=value});
     }
@@ -435,31 +436,83 @@
   function closeZoneMenu(){
     zoneMenu?.remove();zoneMenu=null;
   }
+  function zoneGeometry(zone){
+    return zone?{x:zone.x,y:zone.y,w:zone.w,h:zone.h}:null;
+  }
+  function restoreZoneGeometry(zone,geometry){
+    if(zone&&geometry)Object.assign(zone,geometry);
+  }
+  function startZoneEdit(zone){
+    if(!zone||zone.frozen)return;
+    if(zoneMoveId&&zoneMoveId!==zone.id){
+      toast('Сначала сохраните или отмените изменения текущей зоны.','warning');
+      return;
+    }
+    if(zoneMoveId===zone.id)return;
+    zoneMoveId=zone.id;
+    zoneEditOriginal=zoneGeometry(zone);
+    zoneEditDirty=false;
+    zoneMoveStart=null;
+    zoneResizeStart=null;
+    closeZoneMenu();
+    render();
+    toast('Редактирование зоны: перемещайте её зажатой ЛКМ или тяните за угловые маркеры.','info');
+  }
+  function saveZoneEdit(zone){
+    if(!zone||zoneMoveId!==zone.id)return;
+    persist();
+    if(zoneEditDirty)saveWms(`Изменена геометрия зоны ${zone.name}`);
+    zoneMoveId='';zoneEditOriginal=null;zoneEditDirty=false;zoneMoveStart=null;zoneResizeStart=null;
+    closeZoneMenu();
+    render();
+    toast('Изменения зоны сохранены.','success');
+  }
+  function cancelZoneEdit(){
+    if(!zoneMoveId)return;
+    const zone=zones.find(item=>item.id===zoneMoveId);
+    restoreZoneGeometry(zone,zoneEditOriginal);
+    zoneMoveId='';zoneEditOriginal=null;zoneEditDirty=false;zoneMoveStart=null;zoneResizeStart=null;
+    closeZoneMenu();
+    render();
+    toast('Изменения зоны отменены.','info');
+  }
   function setZoneFrozen(zone,frozen){
+    if(zoneMoveId===zone.id){
+      toast('Сначала сохраните или отмените редактирование зоны.','warning');
+      return;
+    }
     zone.frozen=!!frozen;
-    if(zone.frozen&&zoneMoveId===zone.id)zoneMoveId='';
     persist();
     saveWms(`${zone.frozen?'Заморожена':'Разморожена'} зона ${zone.name}`);
     render();
   }
   function openZoneActionMenu(zone,event){
     closeZoneMenu();
+    if(zoneMoveId&&zoneMoveId!==zone.id){
+      toast('Сначала сохраните или отмените изменения редактируемой зоны.','warning');
+      return;
+    }
+    const editing=zoneMoveId===zone.id;
     const menu=document.createElement('div');
     menu.className='zone-action-menu';
-    menu.innerHTML=`<div class="zone-action-title"><b>${esc(zone.name)}</b><small>${zone.frozen?'Зафиксирована':'Можно перемещать'}</small></div><button type="button" data-zone-menu="open">Открыть зону</button><button type="button" data-zone-menu="move" ${zone.frozen?'disabled':''}>Переместить</button><button type="button" data-zone-menu="freeze">${zone.frozen?'Разморозить':'Заморозить'}</button>`;
+    menu.innerHTML=editing
+      ? `<div class="zone-action-title"><b>${esc(zone.name)}</b><small>Редактирование активно${zoneEditDirty?' · есть изменения':''}</small></div><button type="button" class="zone-action-save" data-zone-menu="save">Сохранить изменения</button><button type="button" data-zone-menu="cancel">Отменить изменения</button>`
+      : `<div class="zone-action-title"><b>${esc(zone.name)}</b><small>${zone.frozen?'Зафиксирована':'Готова к работе'}</small></div><button type="button" data-zone-menu="open">Открыть зону</button><button type="button" data-zone-menu="edit" ${zone.frozen?'disabled':''}>Редактировать зону</button><button type="button" data-zone-menu="freeze">${zone.frozen?'Разморозить':'Заморозить'}</button>`;
     document.body.appendChild(menu);
     const rect=menu.getBoundingClientRect();
     menu.style.left=`${Math.max(8,Math.min(window.innerWidth-rect.width-8,event.clientX+8))}px`;
     menu.style.top=`${Math.max(8,Math.min(window.innerHeight-rect.height-8,event.clientY+8))}px`;
-    menu.querySelector('[data-zone-menu="open"]').onclick=()=>{closeZoneMenu();openZoneForm(zone)};
-    menu.querySelector('[data-zone-menu="move"]').onclick=()=>{if(zone.frozen)return;zoneMoveId=zone.id;closeZoneMenu();render();toast('Зона готова к перемещению. Зажмите ЛКМ на зоне и двигайте её.','info')};
-    menu.querySelector('[data-zone-menu="freeze"]').onclick=()=>{closeZoneMenu();setZoneFrozen(zone,!zone.frozen)};
+    menu.querySelector('[data-zone-menu="open"]')?.addEventListener('click',()=>{closeZoneMenu();openZoneForm(zone)});
+    menu.querySelector('[data-zone-menu="edit"]')?.addEventListener('click',()=>startZoneEdit(zone));
+    menu.querySelector('[data-zone-menu="freeze"]')?.addEventListener('click',()=>{closeZoneMenu();setZoneFrozen(zone,!zone.frozen)});
+    menu.querySelector('[data-zone-menu="save"]')?.addEventListener('click',()=>saveZoneEdit(zone));
+    menu.querySelector('[data-zone-menu="cancel"]')?.addEventListener('click',cancelZoneEdit);
     zoneMenu=menu;
   }
   document.addEventListener('pointerdown',event=>{
     if(zoneMenu&&!event.target.closest('.zone-action-menu')&&!event.target.closest('[data-zone-id]'))closeZoneMenu();
   },true);
-  document.addEventListener('keydown',event=>{if(event.key==='Escape'){closeZoneMenu();if(zoneMoveId){zoneMoveId='';render()}}});
+  document.addEventListener('keydown',event=>{if(event.key==='Escape'){closeZoneMenu();if(zoneMoveId)cancelZoneEdit()}});
 
   function showZonePreview(){
     const svg=document.getElementById('warehouse-svg');if(!svg||!zoneStart||!zoneCurrent)return;
@@ -480,13 +533,30 @@
       event.preventDefault();closeZoneMenu();zoneStart=snapZonePoint(floorPoint(event));zoneCurrent={...zoneStart};pointerAction='wms-zone';event.currentTarget.setPointerCapture(event.pointerId);showZonePreview();return
     }
     const zoneNode=event.target.closest?.('[data-zone-id]');
-    if(workspaceMode==='management'&&zoneMoveId&&event.button===0&&zoneNode?.dataset.zoneId===zoneMoveId&&!event.target.closest?.('[data-box-id],[data-edit-zone-map]')){
+    const resizeNode=event.target.closest?.('[data-zone-resize]');
+    if(workspaceMode==='management'&&zoneMoveId&&event.button===0&&resizeNode&&zoneNode?.dataset.zoneId===zoneMoveId){
       const zone=zones.find(item=>item.id===zoneMoveId);
       if(zone&&!zone.frozen){
-        event.preventDefault();closeZoneMenu();const p=floorPoint(event);zoneMoveStart={pointer:p,x:zone.x,y:zone.y};zoneMoveChanged=false;pointerAction='wms-zone-move';event.currentTarget.classList.add('zone-moving');event.currentTarget.setPointerCapture(event.pointerId);return
+        event.preventDefault();closeZoneMenu();
+        zoneResizeStart={handle:resizeNode.dataset.zoneResize,geometry:zoneGeometry(zone)};
+        pointerAction='wms-zone-resize';
+        event.currentTarget.classList.add('zone-resizing');
+        event.currentTarget.setPointerCapture(event.pointerId);
+        return;
       }
     }
-    // Interactive WMS entities must not accidentally start camera pan.
+    if(workspaceMode==='management'&&zoneMoveId&&event.button===0&&zoneNode?.dataset.zoneId===zoneMoveId&&!event.target.closest?.('[data-box-id]')){
+      const zone=zones.find(item=>item.id===zoneMoveId);
+      if(zone&&!zone.frozen){
+        event.preventDefault();closeZoneMenu();const p=floorPoint(event);
+        zoneMoveStart={pointer:p,x:zone.x,y:zone.y};
+        zoneMoveChanged=false;
+        pointerAction='wms-zone-move';
+        event.currentTarget.classList.add('zone-moving');
+        event.currentTarget.setPointerCapture(event.pointerId);
+        return;
+      }
+    }
     if(workspaceMode==='management'&&event.button===0&&event.target.closest?.('[data-zone-id],[data-box-id]')){pointerAction=null;return}
     return originalPointerDown(event);
   };
@@ -497,9 +567,23 @@
       const p=floorPoint(event),next=snapZonePosition(zone,zoneMoveStart.x+(p.x-zoneMoveStart.pointer.x),zoneMoveStart.y+(p.y-zoneMoveStart.pointer.y));
       const candidate={x:next.x,y:next.y,w:zone.w,h:zone.h};
       if(validZone(candidate,zone.id)){
-        zone.x=next.x;zone.y=next.y;zoneMoveChanged=true;
+        zone.x=next.x;zone.y=next.y;zoneMoveChanged=true;zoneEditDirty=true;
         const node=[...document.querySelectorAll('[data-zone-id]')].find(item=>item.dataset.zoneId===zone.id);
         if(node)node.setAttribute('transform',`translate(${zone.x-zoneMoveStart.x} ${zone.y-zoneMoveStart.y})`);
+      }
+      return;
+    }
+    if(pointerAction==='wms-zone-resize'){
+      const zone=zones.find(item=>item.id===zoneMoveId);if(!zone||!zoneResizeStart)return;
+      const base=zoneResizeStart.geometry,p=snapZonePoint(floorPoint(event),true,zone.id),minSize=20;
+      const left=base.x,top=base.y,right=base.x+base.w,bottom=base.y+base.h;
+      let next={...base};
+      if(zoneResizeStart.handle.includes('w')){next.x=Math.min(p.x,right-minSize);next.w=right-next.x}
+      if(zoneResizeStart.handle.includes('e')){next.w=Math.max(minSize,p.x-left)}
+      if(zoneResizeStart.handle.includes('n')){next.y=Math.min(p.y,bottom-minSize);next.h=bottom-next.y}
+      if(zoneResizeStart.handle.includes('s')){next.h=Math.max(minSize,p.y-top)}
+      if(validZone(next,zone.id)){
+        Object.assign(zone,next);zoneEditDirty=true;updateCanvas();
       }
       return;
     }
@@ -512,26 +596,30 @@
       if(!validZone(rect)){toast('Зона должна быть внутри склада, не пересекать другие зоны и иметь размер не менее 1×1 м.','warning');render();return}
       openZoneForm(null,rect);render();return;
     }
-    if(pointerAction==='wms-zone-move'){
-      const zone=zones.find(item=>item.id===zoneMoveId);
-      pointerAction=null;event.currentTarget.classList.remove('zone-moving');try{event.currentTarget.releasePointerCapture(event.pointerId)}catch(_){}
-      if(zoneMoveChanged&&zone){persist();saveWms(`Перемещена зона ${zone.name}`);suppressZoneClickUntil=Date.now()+250}
-      zoneMoveStart=null;zoneMoveChanged=false;render();return;
+    if(pointerAction==='wms-zone-move'||pointerAction==='wms-zone-resize'){
+      const changed=zoneEditDirty;
+      pointerAction=null;event.currentTarget.classList.remove('zone-moving','zone-resizing');try{event.currentTarget.releasePointerCapture(event.pointerId)}catch(_){}
+      zoneMoveStart=null;zoneMoveChanged=false;zoneResizeStart=null;
+      if(changed)suppressZoneClickUntil=Date.now()+250;
+      render();
+      return;
     }
     return originalPointerUp(event);
   };
   window.onFloorClick=function(event){
     if(Date.now()<suppressZoneClickUntil){event.preventDefault();event.stopPropagation();return}
     const boxNode=event.target.closest?.('[data-box-id]');if(boxNode){event.preventDefault();event.stopPropagation();openBox(boxNode.dataset.boxId);return}
-    const editZoneNode=event.target.closest?.('[data-edit-zone-map]');if(editZoneNode){event.preventDefault();event.stopPropagation();openZoneForm(zones.find(zone=>zone.id===editZoneNode.dataset.editZoneMap));return}
     const zoneNode=event.target.closest?.('[data-zone-id]');if(zoneNode){event.preventDefault();event.stopPropagation();const zone=zones.find(item=>item.id===zoneNode.dataset.zoneId);if(zone)openZoneActionMenu(zone,event);return}
     return originalFloorClick(event);
   };
   window.bindWorkspace=function(){
     originalBindWorkspace();
-    document.getElementById('wms-add-zone')?.addEventListener('click',()=>{zoneDraw=!zoneDraw;zoneMoveId='';closeZoneMenu();const button=document.getElementById('wms-add-zone');button.classList.toggle('primary',zoneDraw);button.textContent=zoneDraw?'Рисуйте зону · шаг 0,5 м':'+ Нарисовать зону';document.getElementById('floor')?.classList.toggle('zone-drawing',zoneDraw)});
+    document.getElementById('wms-add-zone')?.addEventListener('click',()=>{
+      if(zoneMoveId){toast('Сначала сохраните или отмените редактирование зоны.','warning');return}
+      zoneDraw=!zoneDraw;closeZoneMenu();const button=document.getElementById('wms-add-zone');button.classList.toggle('primary',zoneDraw);button.textContent=zoneDraw?'Рисуйте зону · шаг 0,5 м':'+ Нарисовать зону';document.getElementById('floor')?.classList.toggle('zone-drawing',zoneDraw)
+    });
     document.querySelectorAll('[data-open-zone]').forEach(button=>button.onclick=()=>openZoneForm(zones.find(zone=>zone.id===button.dataset.openZone)));
-    document.querySelectorAll('[data-edit-zone]').forEach(button=>button.onclick=()=>openZoneForm(zones.find(zone=>zone.id===button.dataset.editZone)));
+    document.querySelectorAll('[data-edit-zone]').forEach(button=>button.onclick=()=>startZoneEdit(zones.find(zone=>zone.id===button.dataset.editZone)));
   };
   function openZoneForm(zone,rect){
     const value=zone||rect;
