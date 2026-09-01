@@ -714,41 +714,111 @@ select.ui-native-select{
   background:#f4f5ff;color:#5662a4;font-size:9px;line-height:1.55;
 }
 
-/* Dedicated thermal QR label: exactly one 58x60 mm page */
+/* Dedicated thermal QR label: one clean 58×60 mm page */
 .qr-print-sheet{display:none}
 @media print{
   @page{size:58mm 60mm;margin:0}
-  html,body{width:58mm!important;height:60mm!important;margin:0!important;padding:0!important;background:#fff!important}
-  body.printing-qr *{visibility:hidden!important}
-  body.printing-qr #qr-print-sheet,
-  body.printing-qr #qr-print-sheet *{visibility:visible!important}
-  body.printing-qr .modal-backdrop,
-  body.printing-qr .wms-modal{display:none!important;visibility:hidden!important}
-  body.printing-qr #qr-print-sheet{
-    display:flex!important;position:fixed!important;inset:0!important;
-    width:58mm!important;height:60mm!important;margin:0!important;padding:3mm 3.2mm!important;
-    overflow:hidden!important;background:#fff!important;color:#000!important;
-    flex-direction:column!important;align-items:center!important;justify-content:flex-start!important;
+  html,body{
+    width:58mm!important;height:60mm!important;min-width:0!important;
+    margin:0!important;padding:0!important;overflow:hidden!important;background:#fff!important;
+  }
+  body.printing-qr{
+    width:58mm!important;height:60mm!important;overflow:hidden!important;background:#fff!important;
+  }
+  body.printing-qr > *{display:none!important}
+  body.printing-qr > #qr-print-sheet{
+    display:grid!important;
+    grid-template-rows:5mm 42mm 5mm!important;
+    row-gap:1mm!important;
+    position:relative!important;
+    width:58mm!important;height:60mm!important;
+    margin:0!important;padding:2mm 3mm!important;
+    overflow:hidden!important;
+    background:#fff!important;color:#000!important;
     box-shadow:none!important;border:0!important;
+    break-after:avoid!important;page-break-after:avoid!important;
     -webkit-print-color-adjust:exact;print-color-adjust:exact;
   }
+  body.printing-qr #qr-print-sheet,
+  body.printing-qr #qr-print-sheet *{visibility:visible!important}
   .qr-print-box-id{
-    align-self:stretch;text-align:left;font:700 4mm/1.1 Arial,sans-serif!important;
-    margin:0 0 1.4mm!important;letter-spacing:.1mm;
+    width:100%!important;height:5mm!important;
+    display:flex!important;align-items:center!important;justify-content:center!important;
+    margin:0!important;padding:0!important;
+    font:700 4mm/5mm Arial,sans-serif!important;letter-spacing:.08mm!important;
+    white-space:nowrap!important;
   }
-  .qr-print-code{width:38mm!important;height:38mm!important;display:grid!important;place-items:center!important;margin:0 auto 1.2mm!important}
-  .qr-print-code img,.qr-print-code canvas{width:38mm!important;height:38mm!important;display:block!important}
+  .qr-print-code{
+    width:42mm!important;height:42mm!important;
+    margin:0 auto!important;padding:0!important;
+    display:grid!important;place-items:center!important;
+    overflow:hidden!important;
+  }
+  .qr-print-code canvas,
+  .qr-print-code img{
+    display:block!important;width:42mm!important;height:42mm!important;
+    max-width:42mm!important;max-height:42mm!important;
+    margin:0!important;padding:0!important;border:0!important;
+    object-fit:contain!important;
+  }
   .qr-print-location{
-    width:100%;text-align:center;font:700 3mm/1.2 Arial,sans-serif!important;
-    white-space:nowrap;overflow:hidden;text-overflow:ellipsis;margin:.4mm 0!important;
-  }
-  .qr-print-value{
-    width:100%;text-align:center;font:400 1.8mm/1.15 Arial,sans-serif!important;
-    white-space:nowrap;overflow:hidden;text-overflow:ellipsis;
+    width:100%!important;height:5mm!important;
+    display:flex!important;align-items:center!important;justify-content:center!important;
+    margin:0!important;padding:0 1mm!important;
+    text-align:center!important;
+    font:700 2.6mm/3mm Arial,sans-serif!important;
+    white-space:nowrap!important;overflow:hidden!important;text-overflow:ellipsis!important;
   }
 }
 
 @media(max-width:900px){
   .warehouse-manager-row{grid-template-columns:1fr 1fr!important}
   .warehouse-manager-row .ui-select{grid-column:1/-1}
+}
+
+
+/* PR#26 — warehouse manager and zone box actions */
+.warehouse-manager-select{width:100%;min-width:0}
+.warehouse-manager-select .ui-select{width:100%}
+.warehouse-manager-select .ui-select-trigger{min-height:36px;height:36px}
+.warehouse-manager-actions{
+  margin-top:7px;display:grid;grid-template-columns:auto minmax(0,1fr) auto;gap:6px;
+}
+.warehouse-manager-actions .btn{
+  min-width:0!important;width:100%;padding:0 7px!important;white-space:nowrap!important;
+  font-size:9px!important;
+}
+.zone-box-panel{
+  display:grid;gap:7px;padding:10px;
+  border:1px solid var(--ui-line);border-radius:11px;background:#f8f9fc;
+}
+.zone-box-panel-head{display:flex;align-items:center;justify-content:space-between;color:var(--ui-muted);font-size:9px;font-weight:690}
+.zone-box-panel-head b{
+  display:grid;place-items:center;min-width:22px;height:22px;padding:0 6px;border-radius:999px;
+  background:#fff;border:1px solid var(--ui-line);color:var(--ui-ink);font-size:9px;
+}
+.zone-modal-boxes{display:grid;gap:5px;max-height:190px;overflow:auto}
+.zone-modal-box{
+  display:grid;grid-template-columns:minmax(0,1fr) auto;gap:5px;
+  background:#fff;border:1px solid #e4e8f0;border-radius:9px;padding:4px;
+}
+.zone-modal-box-main{
+  min-width:0;border:0;background:transparent;border-radius:7px;padding:6px 7px;
+  display:flex;align-items:center;justify-content:space-between;gap:8px;text-align:left;cursor:pointer;
+}
+.zone-modal-box-main:hover{background:#f4f5ff}
+.zone-modal-box-main>span:first-child{min-width:0;display:grid;gap:2px}
+.zone-modal-box-main b{font-size:9px;color:var(--ui-ink)}
+.zone-modal-box-main small{font-size:8px;color:var(--ui-faint)}
+.zone-modal-box-arrow{color:#8993a6;font-size:11px}
+.zone-modal-box-delete{
+  border:1px solid #efd3d6;background:#fff5f6;color:var(--ui-danger);border-radius:7px;
+  padding:0 8px;cursor:pointer;font-size:8px;font-weight:700;
+}
+.zone-modal-box-delete:hover{background:#fbe8eb;border-color:#e8bdc2}
+.zone-modal-box-empty{padding:9px;text-align:center;color:var(--ui-faint);font-size:8px}
+
+@media(max-width:900px){
+  .warehouse-manager-actions{grid-template-columns:1fr 1fr}
+  .warehouse-manager-actions #delete-warehouse{grid-column:1/-1}
 }
