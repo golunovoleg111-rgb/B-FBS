@@ -228,11 +228,47 @@
     if(article<0||barcode<0||size<0)return {items:[],error:'Не найдены колонки Артикул, Баркод и Размер.'};
     const items=rows.slice(1).map(row=>({article:String(row[article]||'').trim(),barcode:String(row[barcode]||'').replace(/\.0$/,'').trim(),size:String(row[size]||'').trim()})).filter(item=>item.article&&item.barcode&&item.size);return {items};
   }
+  function workbookRows(arrayBuffer){
+    if(!window.XLSX)throw new Error('Модуль Excel не загружен. Обновите страницу и повторите попытку.');
+    const workbook=XLSX.read(arrayBuffer,{type:'array',cellDates:false});
+    const sheetName=workbook.SheetNames.find(name=>workbook.Sheets[name]?.['!ref'])||workbook.SheetNames[0];
+    if(!sheetName)throw new Error('В книге Excel нет листов.');
+    return XLSX.utils.sheet_to_json(workbook.Sheets[sheetName],{header:1,raw:false,defval:''});
+  }
   function openImport(){
-    openModal('Импорт номенклатуры WB',`<p>Загрузите CSV, TSV или Excel. Будут использованы только столбцы «Артикул», «Баркод» и «Размер».</p><div class="import-drop"><input id="wb-file" type="file" accept=".csv,.tsv,.txt,.xlsx,.xls"><div id="import-preview">Файл не выбран</div></div><div class="modal-actions"><button class="btn" data-close>Отмена</button><button class="btn primary" id="confirm-import" disabled>Импортировать</button></div>`,(modal,close)=>{
+    openModal('Импорт номенклатуры WB',`<p>Загрузите CSV, TSV, XLSX или XLS. Excel обрабатывается прямо на этом устройстве и работает в автономном режиме. Будут использованы только столбцы «Артикул», «Баркод» и «Размер».</p><div class="import-drop"><input id="wb-file" type="file" accept=".csv,.tsv,.txt,.xlsx,.xls"><div id="import-preview">Файл не выбран</div></div><div class="modal-actions"><button class="btn" data-close>Отмена</button><button class="btn primary" id="confirm-import" disabled>Импортировать</button></div>`,(modal,close)=>{
       let parsed=[];const input=modal.querySelector('#wb-file'),preview=modal.querySelector('#import-preview'),confirm=modal.querySelector('#confirm-import');
-      input.onchange=async()=>{const file=input.files[0];if(!file)return;preview.textContent='Чтение файла…';try{let rows;if(/\.xlsx?$/i.test(file.name)){if(!backendAvailable)throw new Error('Для Excel требуется подключение к серверу. В автономном режиме используйте CSV.');const bytes=new Uint8Array(await file.arrayBuffer());let binary='';for(let i=0;i<bytes.length;i+=32768)binary+=String.fromCharCode(...bytes.subarray(i,i+32768));const result=await requestApi('/api/import/preview',{method:'POST',body:JSON.stringify({name:file.name,data:btoa(binary)})});rows=result.rows}else rows=parseDelimited(await file.text());const result=rowsToNomenclature(rows);if(result.error)throw new Error(result.error);parsed=result.items;preview.innerHTML=`<b>Распознано: ${parsed.length}</b><small>${parsed.slice(0,5).map(item=>`${esc(item.article)} · ${esc(item.barcode)} · ${esc(item.size)}`).join('<br>')}</small>`;confirm.disabled=!parsed.length}catch(error){parsed=[];confirm.disabled=true;preview.innerHTML=`<span class="error-text">${esc(error.message)}</span>`}};
-      confirm.onclick=()=>{const byBarcode=new Map(wms.nomenclature.map(item=>[item.barcode,item]));let added=0,updated=0;parsed.forEach(item=>{const existing=byBarcode.get(item.barcode);if(existing){Object.assign(existing,item,{updatedAt:new Date().toISOString()});updated++}else{const created={id:uid('SKU'),...item,updatedAt:new Date().toISOString()};wms.nomenclature.push(created);byBarcode.set(item.barcode,created);added++}});saveWms(`Импорт WB: добавлено ${added}, обновлено ${updated}`);close();toast(`Импортировано: ${added} новых, ${updated} обновлено.`,'success');window.render()};
+      input.onchange=async()=>{
+        const file=input.files[0];if(!file)return;
+        preview.textContent='Чтение файла…';
+        try{
+          if(file.size>10*1024*1024)throw new Error('Файл слишком большой. Максимальный размер — 10 МБ.');
+          let rows;
+          if(/\.xlsx?$/i.test(file.name)){
+            rows=workbookRows(await file.arrayBuffer());
+          }else{
+            rows=parseDelimited(await file.text());
+          }
+          const result=rowsToNomenclature(rows);
+          if(result.error)throw new Error(result.error);
+          parsed=result.items;
+          preview.innerHTML=`<b>Распознано: ${parsed.length}</b><small>${parsed.slice(0,5).map(item=>`${esc(item.article)} · ${esc(item.barcode)} · ${esc(item.size)}`).join('<br>')}</small>`;
+          confirm.disabled=!parsed.length;
+        }catch(error){
+          parsed=[];confirm.disabled=true;
+          preview.innerHTML=`<span class="error-text">${esc(error.message)}</span>`;
+        }
+      };
+      confirm.onclick=()=>{
+        const byBarcode=new Map(wms.nomenclature.map(item=>[item.barcode,item]));let added=0,updated=0;
+        parsed.forEach(item=>{
+          const existing=byBarcode.get(item.barcode);
+          if(existing){Object.assign(existing,item,{updatedAt:new Date().toISOString()});updated++}
+          else{const created={id:uid('SKU'),...item,updatedAt:new Date().toISOString()};wms.nomenclature.push(created);byBarcode.set(item.barcode,created);added++}
+        });
+        saveWms(`Импорт WB: добавлено ${added}, обновлено ${updated}`);
+        close();toast(`Импортировано: ${added} новых, ${updated} обновлено.`,'success');window.render();
+      };
     });
   }
 
