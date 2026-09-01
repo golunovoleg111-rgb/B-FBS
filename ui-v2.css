@@ -593,11 +593,12 @@ button:focus-visible,input:focus-visible,select:focus-visible,textarea:focus-vis
 
 
 /* Unified custom dropdowns */
-.ui-native-select{
+select.ui-native-select{
   position:absolute!important;
-  width:1px!important;height:1px!important;
+  width:1px!important;height:1px!important;min-height:0!important;
   opacity:0!important;pointer-events:none!important;
   margin:0!important;padding:0!important;border:0!important;
+  clip:rect(0 0 0 0)!important;clip-path:inset(50%)!important;
 }
 .ui-select{position:relative;min-width:0;width:100%}
 .ui-select-trigger{
