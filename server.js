@@ -17,6 +17,35 @@ const PERSISTENT_STORAGE = CLOUD_PROVIDER !== 'railway' || !!(RAILWAY_VOLUME_DIR
 const SESSION_TTL_MS = Number(process.env.BFBS_SESSION_HOURS || 24) * 60 * 60 * 1000;
 const MAX_BODY = 10 * 1024 * 1024;
 const ROLES = new Set(['admin', 'manager', 'picker', 'auditor']);
+const PERMISSION_KEYS = [
+  'dashboard_view','workspace_view','layout_manage','zones_manage',
+  'inventory_view','inventory_manage','nomenclature_manage',
+  'transfers_view','transfers_manage',
+  'revisions_view','revisions_manage',
+  'tasks_view','tasks_manage','tasks_pick'
+];
+const ALL_PERMISSIONS = Object.fromEntries(PERMISSION_KEYS.map(key=>[key,true]));
+const ROLE_PERMISSION_DEFAULTS = {
+  admin:{...ALL_PERMISSIONS},
+  manager:{
+    dashboard_view:true,workspace_view:true,layout_manage:true,zones_manage:true,
+    inventory_view:true,inventory_manage:true,nomenclature_manage:true,
+    transfers_view:true,transfers_manage:true,revisions_view:true,revisions_manage:true,
+    tasks_view:true,tasks_manage:true,tasks_pick:true
+  },
+  picker:{
+    dashboard_view:true,workspace_view:true,layout_manage:false,zones_manage:false,
+    inventory_view:true,inventory_manage:false,nomenclature_manage:false,
+    transfers_view:true,transfers_manage:true,revisions_view:false,revisions_manage:false,
+    tasks_view:true,tasks_manage:false,tasks_pick:true
+  },
+  auditor:{
+    dashboard_view:true,workspace_view:true,layout_manage:false,zones_manage:false,
+    inventory_view:true,inventory_manage:false,nomenclature_manage:false,
+    transfers_view:false,transfers_manage:false,revisions_view:true,revisions_manage:true,
+    tasks_view:false,tasks_manage:false,tasks_pick:false
+  }
+};
 const GOOGLE_SHEET_ID = process.env.BFBS_GOOGLE_SHEET_ID || '1oaf7MiFLdMpOI-syYOaJEeXpIyGRLzkGkUXvlMbJroU';
 const GOOGLE_SHEET_GID = process.env.BFBS_GOOGLE_SHEET_GID || '0';
 
@@ -64,6 +93,10 @@ db.exec(`
   CREATE INDEX IF NOT EXISTS idx_audit_created ON audit_log(created_at DESC);
   CREATE INDEX IF NOT EXISTS idx_sessions_expiry ON sessions(expires_at);
 `);
+const userColumns = db.prepare('PRAGMA table_info(users)').all();
+if(!userColumns.some(column=>column.name==='permissions_json')){
+  db.exec("ALTER TABLE users ADD COLUMN permissions_json TEXT NOT NULL DEFAULT '{}'");
+}
 
 function now(){ return new Date().toISOString(); }
 function json(value){ return JSON.stringify(value); }
@@ -78,8 +111,36 @@ function verifyPassword(password, stored){
   const expectedBuffer = Buffer.from(expected, 'hex');
   return actual.length === expectedBuffer.length && crypto.timingSafeEqual(actual, expectedBuffer);
 }
+function defaultPermissions(role){
+  return {...(ROLE_PERMISSION_DEFAULTS[role] || ROLE_PERMISSION_DEFAULTS.picker)};
+}
+function normalizePermissions(value, role){
+  if(role==='admin') return {...ALL_PERMISSIONS};
+  const base = defaultPermissions(role);
+  if(value === undefined || value === null) return base;
+  if(typeof value !== 'object' || Array.isArray(value)){
+    throw Object.assign(new Error('Некорректные права доступа.'), {status:400});
+  }
+  const result = {...base};
+  for(const key of PERMISSION_KEYS){
+    if(Object.prototype.hasOwnProperty.call(value,key)) result[key]=!!value[key];
+  }
+  return result;
+}
+function effectivePermissions(row){
+  if(!row) return defaultPermissions('picker');
+  if(row.role==='admin') return {...ALL_PERMISSIONS};
+  return normalizePermissions(parseJson(row.permissions_json,{}), row.role);
+}
+function hasPermission(row, key){
+  return row?.role==='admin' || !!effectivePermissions(row)[key];
+}
 function publicUser(row){
-  return row && {id:row.id, login:row.login, name:row.name, role:row.role, active:!!row.active, createdAt:row.created_at, updatedAt:row.updated_at, lastLoginAt:row.last_login_at};
+  return row && {
+    id:row.id, login:row.login, name:row.name, role:row.role,
+    permissions:effectivePermissions(row),
+    active:!!row.active, createdAt:row.created_at, updatedAt:row.updated_at, lastLoginAt:row.last_login_at
+  };
 }
 function audit(userId, action, entityType = null, entityId = null, details = null){
   db.prepare('INSERT INTO audit_log(user_id,action,entity_type,entity_id,details,created_at) VALUES(?,?,?,?,?,?)')
@@ -140,6 +201,108 @@ function requireUser(req, res, roles){
   if(!user){send(res, 401, {error:'Требуется авторизация.'});return null}
   if(roles && !roles.includes(user.role)){send(res, 403, {error:'Недостаточно прав.'});return null}
   return user;
+}
+function requirePermission(req, res, permission){
+  const user = currentUser(req);
+  if(!user){send(res,401,{error:'Требуется авторизация.'});return null}
+  if(!hasPermission(user,permission)){send(res,403,{error:'Недостаточно прав для этой операции.',permission});return null}
+  return user;
+}
+function sameJson(a,b){return json(a ?? null)===json(b ?? null)}
+function workspaceZonesSnapshot(state){
+  return {
+    workspace:Array.isArray(state?.workspace?.zones)?state.workspace.zones:[],
+    warehouses:(Array.isArray(state?.warehouses)?state.warehouses:[]).map(item=>({id:item?.id||'',zones:Array.isArray(item?.zones)?item.zones:[]}))
+  };
+}
+function workspaceLayoutSnapshot(state){
+  const workspace=state?.workspace && typeof state.workspace==='object' ? {...state.workspace} : state?.workspace;
+  if(workspace && typeof workspace==='object') delete workspace.zones;
+  const warehouses=(Array.isArray(state?.warehouses)?state.warehouses:[]).map(item=>{
+    const copy={...(item||{})};delete copy.zones;delete copy.view;return copy;
+  });
+  return {workspace,warehouses};
+}
+function taskPickingDelta(currentTasks,nextTasks){
+  if(!Array.isArray(currentTasks)||!Array.isArray(nextTasks)||currentTasks.length!==nextTasks.length)return null;
+  const currentById=new Map(currentTasks.map(task=>[task.id,task])),deltaByBarcode=new Map();
+  for(const next of nextTasks){
+    const current=currentById.get(next.id);if(!current)return null;
+    const strip=task=>{
+      const copy={...task};delete copy.status;delete copy.startedAt;delete copy.readyAt;
+      copy.lines=(task.lines||[]).map(line=>{const value={...line};delete value.picked;return value});
+      return copy;
+    };
+    if(!sameJson(strip(current),strip(next)))return null;
+    const allowedStatus=(current.status==='queued'&&['queued','working','ready'].includes(next.status))
+      ||(current.status==='working'&&['working','ready'].includes(next.status));
+    if(!allowedStatus)return null;
+    const currentLines=current.lines||[],nextLines=next.lines||[];
+    if(currentLines.length!==nextLines.length)return null;
+    for(let i=0;i<nextLines.length;i++){
+      const before=Number(currentLines[i].picked||0),after=Number(nextLines[i].picked||0);
+      if(after<before || after>Number(nextLines[i].required||0))return null;
+      const diff=after-before;
+      if(diff)deltaByBarcode.set(String(nextLines[i].barcode||''),(deltaByBarcode.get(String(nextLines[i].barcode||''))||0)+diff);
+    }
+  }
+  return deltaByBarcode;
+}
+function pickingInventoryOnly(currentWms,nextWms,pickedDelta){
+  const currentBoxes=Array.isArray(currentWms?.boxes)?currentWms.boxes:[],nextBoxes=Array.isArray(nextWms?.boxes)?nextWms.boxes:[];
+  if(currentBoxes.length!==nextBoxes.length)return false;
+  const currentById=new Map(currentBoxes.map(box=>[box.id,box])),boxDelta=new Map();
+  for(const next of nextBoxes){
+    const current=currentById.get(next.id);if(!current)return false;
+    const stripBox=box=>{
+      const copy={...box};delete copy.updatedAt;
+      copy.items=(box.items||[]).map(item=>{const value={...item};delete value.quantity;return value});
+      return copy;
+    };
+    if(!sameJson(stripBox(current),stripBox(next)))return false;
+    const currentItems=new Map((current.items||[]).map(item=>[String(item.barcode||''),item]));
+    if(currentItems.size!==(next.items||[]).length)return false;
+    for(const item of next.items||[]){
+      const before=currentItems.get(String(item.barcode||''));if(!before)return false;
+      const beforeQty=Number(before.quantity||0),afterQty=Number(item.quantity||0);
+      if(afterQty>beforeQty||afterQty<0)return false;
+      const diff=beforeQty-afterQty;
+      if(diff)boxDelta.set(String(item.barcode||''),(boxDelta.get(String(item.barcode||''))||0)+diff);
+    }
+  }
+  const keys=new Set([...pickedDelta.keys(),...boxDelta.keys()]);
+  for(const key of keys){if((pickedDelta.get(key)||0)!==(boxDelta.get(key)||0))return false}
+  return true;
+}
+function validateStatePermissions(user,currentState,nextState){
+  const deny=permission=>{throw Object.assign(new Error('Недостаточно прав для изменения данных.'),{status:403,permission})};
+  if(!sameJson(workspaceLayoutSnapshot(currentState),workspaceLayoutSnapshot(nextState))&&!hasPermission(user,'layout_manage'))deny('layout_manage');
+  if(!sameJson(workspaceZonesSnapshot(currentState),workspaceZonesSnapshot(nextState))&&!hasPermission(user,'zones_manage'))deny('zones_manage');
+
+  const currentWms=currentState?.wms||{},nextWms=nextState?.wms||{};
+  const nomenclatureChanged=!sameJson(currentWms.nomenclature||[],nextWms.nomenclature||[]);
+  const transfersChanged=!sameJson(currentWms.transfers||[],nextWms.transfers||[]);
+  const revisionsChanged=!sameJson(currentWms.revisions||[],nextWms.revisions||[]);
+  const tasksChanged=!sameJson(currentWms.tasks||[],nextWms.tasks||[]);
+  const boxesChanged=!sameJson(currentWms.boxes||[],nextWms.boxes||[]);
+  const movementsChanged=!sameJson(currentWms.movements||[],nextWms.movements||[]);
+
+  if(nomenclatureChanged&&!hasPermission(user,'nomenclature_manage'))deny('nomenclature_manage');
+  if(transfersChanged&&!hasPermission(user,'transfers_manage'))deny('transfers_manage');
+  if(revisionsChanged&&!hasPermission(user,'revisions_manage'))deny('revisions_manage');
+
+  let pickingDelta=null,pickingOnly=false;
+  if(tasksChanged){
+    pickingDelta=taskPickingDelta(currentWms.tasks||[],nextWms.tasks||[]);
+    pickingOnly=!!pickingDelta&&hasPermission(user,'tasks_pick');
+    if(!pickingOnly&&!hasPermission(user,'tasks_manage'))deny('tasks_manage');
+  }
+  if(boxesChanged){
+    const pickingBoxes=pickingOnly&&pickingInventoryOnly(currentWms,nextWms,pickingDelta);
+    const relatedOperation=(transfersChanged&&hasPermission(user,'transfers_manage'))||(revisionsChanged&&hasPermission(user,'revisions_manage'));
+    if(!pickingBoxes&&!relatedOperation&&!hasPermission(user,'inventory_manage'))deny('inventory_manage');
+  }
+  if(movementsChanged&&!boxesChanged&&!hasPermission(user,'inventory_manage')&&!pickingOnly&&!transfersChanged&&!revisionsChanged)deny('inventory_manage');
 }
 function validateUserInput(body, editing = false){
   const login = String(body.login || '').trim();
@@ -282,11 +445,13 @@ async function api(req, res, pathname){
   }
   if(req.method === 'POST' && pathname === '/api/users'){
     const actor = requireUser(req, res, ['admin']); if(!actor)return;
-    const input = validateUserInput(await readBody(req));
+    const body = await readBody(req);
+    const input = validateUserInput(body);
+    const permissions = normalizePermissions(body.permissions,input.role);
     const id = crypto.randomUUID(), timestamp = now();
     try{
-      db.prepare('INSERT INTO users(id,login,name,role,password_hash,active,created_at,updated_at) VALUES(?,?,?,?,?,1,?,?)')
-        .run(id,input.login,input.name,input.role,passwordHash(input.password),timestamp,timestamp);
+      db.prepare('INSERT INTO users(id,login,name,role,password_hash,permissions_json,active,created_at,updated_at) VALUES(?,?,?,?,?,?,1,?,?)')
+        .run(id,input.login,input.name,input.role,passwordHash(input.password),json(permissions),timestamp,timestamp);
     }catch(error){
       if(String(error.message).includes('UNIQUE')){send(res,409,{error:'Пользователь с таким логином уже существует.'});return}
       throw error;
@@ -303,13 +468,19 @@ async function api(req, res, pathname){
     const input = validateUserInput({...existing,...body}, true);
     const active = body.active === undefined ? existing.active : (body.active ? 1 : 0);
     if(existing.id === actor.id && !active){send(res,400,{error:'Нельзя отключить собственную учетную запись.'});return}
+    if(String(existing.login).toLowerCase()==='admin1'&&input.role!=='admin'){send(res,400,{error:'Основного администратора Admin1 нельзя лишить роли администратора.'});return}
+    const roleChanged=input.role!==existing.role;
+    const permissions=normalizePermissions(
+      body.permissions===undefined?(roleChanged?undefined:parseJson(existing.permissions_json,{})):body.permissions,
+      input.role
+    );
     try{
       if(input.password){
-        db.prepare('UPDATE users SET login=?,name=?,role=?,active=?,password_hash=?,updated_at=? WHERE id=?')
-          .run(input.login,input.name,input.role,active,passwordHash(input.password),now(),existing.id);
+        db.prepare('UPDATE users SET login=?,name=?,role=?,permissions_json=?,active=?,password_hash=?,updated_at=? WHERE id=?')
+          .run(input.login,input.name,input.role,json(permissions),active,passwordHash(input.password),now(),existing.id);
       }else{
-        db.prepare('UPDATE users SET login=?,name=?,role=?,active=?,updated_at=? WHERE id=?')
-          .run(input.login,input.name,input.role,active,now(),existing.id);
+        db.prepare('UPDATE users SET login=?,name=?,role=?,permissions_json=?,active=?,updated_at=? WHERE id=?')
+          .run(input.login,input.name,input.role,json(permissions),active,now(),existing.id);
       }
     }catch(error){
       if(String(error.message).includes('UNIQUE')){send(res,409,{error:'Пользователь с таким логином уже существует.'});return}
@@ -329,10 +500,12 @@ async function api(req, res, pathname){
     const user = requireUser(req, res); if(!user)return;
     const body = await readBody(req);
     if(!body.state || typeof body.state !== 'object' || Array.isArray(body.state)){send(res,400,{error:'Некорректное состояние системы.'});return}
-    const current = db.prepare('SELECT revision FROM app_state WHERE id=1').get();
+    const current = db.prepare('SELECT revision,payload FROM app_state WHERE id=1').get();
     if(Number.isInteger(body.revision) && body.revision !== current.revision){
       send(res,409,{error:'Данные были изменены другим сотрудником.',revision:current.revision});return;
     }
+    try{validateStatePermissions(user,parseJson(current.payload,{}),body.state)}
+    catch(error){send(res,error.status||403,{error:error.message,permission:error.permission||null});return}
     const revision = current.revision + 1, timestamp = now();
     db.prepare('UPDATE app_state SET revision=?,payload=?,updated_at=?,updated_by=? WHERE id=1')
       .run(revision,json(body.state),timestamp,user.id);
@@ -372,7 +545,7 @@ async function api(req, res, pathname){
     send(res,200,{configured:!!process.env.WB_API_TOKEN,message:process.env.WB_API_TOKEN?'Ключ задан на сервере.':'Задайте WB_API_TOKEN в окружении сервера.'});return;
   }
   if(req.method === 'GET' && pathname === '/api/google-sheet/summary'){
-    const user = requireUser(req, res); if(!user)return;
+    const user = requirePermission(req, res, 'inventory_view'); if(!user)return;
     try{
       const items = await googleSummaryItems();
       send(res,200,{items,spreadsheetId:GOOGLE_SHEET_ID,gid:GOOGLE_SHEET_GID,updatedAt:now()});
@@ -382,7 +555,7 @@ async function api(req, res, pathname){
     return;
   }
   if(req.method === 'POST' && pathname === '/api/import/preview'){
-    const user = requireUser(req, res, ['admin','manager']); if(!user)return;
+    const user = requirePermission(req, res, 'nomenclature_manage'); if(!user)return;
     const body = await readBody(req);
     const name = String(body.name || 'import.xlsx');
     if(!/\.xlsx?$/i.test(name)){send(res,400,{error:'Поддерживаются только файлы Excel XLSX/XLS.'});return}
