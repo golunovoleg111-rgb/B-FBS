@@ -394,8 +394,17 @@
     });
   }
 
+  function permissionCount(user){
+    const permissions=userPermissions(user);
+    return ALL_PERMISSION_KEYS.filter(key=>permissions[key]).length;
+  }
   async function loadUsers(){
-    const host=document.getElementById('users-content');if(!host||!backendAvailable)return;try{const result=await requestApi('/api/users');host.innerHTML=`<div class="wms-table-wrap"><table class="wms-table"><thead><tr><th>Сотрудник</th><th>Логин</th><th>Роль</th><th>Последний вход</th><th>Статус</th><th></th></tr></thead><tbody>${result.users.map(user=>`<tr><td><b>${esc(user.name)}</b></td><td>${esc(user.login)}</td><td>${esc(roleName(user.role))}</td><td>${dateText(user.lastLoginAt)}</td><td><span class="status-pill ${user.active?'ok':'muted'}">${user.active?'Активен':'Отключен'}</span></td><td><button class="table-link" data-edit-user="${esc(user.id)}">Изменить</button></td></tr>`).join('')}</tbody></table></div>`;host.querySelectorAll('[data-edit-user]').forEach(button=>button.onclick=()=>openUserForm(result.users.find(user=>user.id===button.dataset.editUser)))}catch(error){host.innerHTML=empty(error.message)}
+    const host=document.getElementById('users-content');if(!host||!backendAvailable)return;
+    try{
+      const result=await requestApi('/api/users');
+      host.innerHTML=`<div class="wms-table-wrap"><table class="wms-table"><thead><tr><th>Сотрудник</th><th>Логин</th><th>Роль</th><th>Доступ</th><th>Последний вход</th><th>Статус</th><th></th></tr></thead><tbody>${result.users.map(user=>`<tr><td><b>${esc(user.name)}</b></td><td>${esc(user.login)}</td><td>${esc(roleName(user.role))}</td><td><span class="permission-count">${user.role==='admin'?'Полный':permissionCount(user)+' / '+ALL_PERMISSION_KEYS.length}</span></td><td>${dateText(user.lastLoginAt)}</td><td><span class="status-pill ${user.active?'ok':'muted'}">${user.active?'Активен':'Отключен'}</span></td><td><button class="table-link" data-edit-user="${esc(user.id)}">Изменить доступ</button></td></tr>`).join('')}</tbody></table></div>`;
+      host.querySelectorAll('[data-edit-user]').forEach(button=>button.onclick=()=>openUserForm(result.users.find(user=>user.id===button.dataset.editUser)));
+    }catch(error){host.innerHTML=empty(error.message)}
   }
   async function loadAudit(){const host=document.getElementById('audit-content');if(!host||!backendAvailable)return;try{const result=await requestApi('/api/audit');host.innerHTML=`<div class="audit-list">${result.events.slice(0,50).map(event=>`<div><b>${esc(event.name||event.login||'Система')}</b><span>${esc(event.action)}</span><small>${dateText(event.createdAt)}</small></div>`).join('')||'Событий нет'}</div>`}catch(error){host.innerHTML=empty(error.message)}}
   function backupStateFromPayload(payload){
@@ -506,8 +515,64 @@
       }catch(error){toast(error.message,'warning')}
     });
   }
+  function permissionEditorHtml(role,permissions){
+    const values={...defaultPermissions(role),...(permissions||{})};
+    const groups=[
+      ['Разделы',['dashboard_view','workspace_view','inventory_view','transfers_view','revisions_view','tasks_view']],
+      ['Склад и хранение',['layout_manage','zones_manage','inventory_manage','nomenclature_manage']],
+      ['Операции',['transfers_manage','revisions_manage','tasks_manage','tasks_pick']]
+    ];
+    const locked=role==='admin';
+    return `<div class="permission-editor" id="permission-editor">
+      <div class="permission-editor-head"><div><b>Доступ сотрудника</b><small>Роль задает стартовый шаблон. Ниже можно включить или отключить каждую функцию отдельно.</small></div><button type="button" class="btn permission-reset" id="permission-reset" ${locked?'disabled':''}>Сбросить по роли</button></div>
+      ${groups.map(([title,keys])=>`<div class="permission-group"><div class="permission-group-title">${title}</div><div class="permission-grid">${keys.map(key=>{const [label,note]=PERMISSION_LABELS[key];return `<label class="permission-item ${locked?'locked':''}"><input type="checkbox" data-permission-key="${key}" ${values[key]?'checked':''} ${locked?'disabled':''}><span><b>${esc(label)}</b><small>${esc(note)}</small></span></label>`}).join('')}</div></div>`).join('')}
+      ${locked?'<div class="permission-admin-note">У роли «Администратор» всегда полный доступ. Это нельзя отключить отдельными переключателями.</div>':''}
+    </div>`;
+  }
+  function syncPermissionEditor(modal,role,permissions){
+    const host=modal.querySelector('#permission-editor');
+    if(!host)return;
+    const wrapper=document.createElement('div');
+    wrapper.innerHTML=permissionEditorHtml(role,permissions);
+    host.replaceWith(wrapper.firstElementChild);
+    modal.querySelector('#permission-reset')?.addEventListener('click',()=>syncPermissionEditor(modal,role,defaultPermissions(role)));
+  }
   function openUserForm(user){
-    openModal(user?'Сотрудник':'Новый сотрудник',`<form class="wms-form" id="user-form"><label>Имя<input name="name" value="${esc(user?.name||'')}" required></label><label>Логин<input name="login" value="${esc(user?.login||'')}" required></label><label>Роль<select name="role">${Object.entries(ROLE_NAMES).map(([value,label])=>`<option value="${value}" ${user?.role===value?'selected':''}>${label}</option>`).join('')}</select></label><label>Пароль ${user?'<small>оставьте пустым без изменения</small>':''}<input name="password" type="password" ${user?'':'required'} minlength="8"></label>${user?`<label class="check-row"><input name="active" type="checkbox" ${user.active?'checked':''}> Учетная запись активна</label>`:''}<div class="form-error"></div><div class="modal-actions"><button type="button" class="btn" data-close>Отмена</button><button class="btn primary">Сохранить</button></div></form>`,(modal,close)=>{modal.querySelector('form').onsubmit=async event=>{event.preventDefault();const form=event.currentTarget,data=Object.fromEntries(new FormData(form));if(user)data.active=form.elements.active.checked;try{await requestApi(user?`/api/users/${encodeURIComponent(user.id)}`:'/api/users',{method:user?'PATCH':'POST',body:JSON.stringify(data)});close();toast('Учетная запись сохранена.','success');loadUsers()}catch(error){form.querySelector('.form-error').innerHTML=`<div class="error">${esc(error.message)}</div>`}}});
+    const initialRole=user?.role||'picker';
+    openModal(user?'Сотрудник':'Новый сотрудник',`<form class="wms-form user-access-form" id="user-form">
+      <div class="user-fields-grid">
+        <label>Имя<input name="name" value="${esc(user?.name||'')}" required></label>
+        <label>Логин<input name="login" value="${esc(user?.login||'')}" required></label>
+        <label>Роль<select name="role">${Object.entries(ROLE_NAMES).map(([value,label])=>`<option value="${value}" ${initialRole===value?'selected':''}>${label}</option>`).join('')}</select></label>
+        <label>Пароль ${user?'<small>оставьте пустым без изменения</small>':''}<input name="password" type="password" ${user?'':'required'} minlength="8"></label>
+      </div>
+      ${permissionEditorHtml(initialRole,user?.permissions)}
+      ${user?`<label class="check-row"><input name="active" type="checkbox" ${user.active?'checked':''}> Учетная запись активна</label>`:''}
+      <div class="form-error"></div>
+      <div class="modal-actions"><button type="button" class="btn" data-close>Отмена</button><button class="btn primary">Сохранить</button></div>
+    </form>`,(modal,close)=>{
+      const form=modal.querySelector('form'),roleSelect=form.elements.role;
+      roleSelect.addEventListener('change',()=>syncPermissionEditor(modal,roleSelect.value,defaultPermissions(roleSelect.value)));
+      modal.querySelector('#permission-reset')?.addEventListener('click',()=>syncPermissionEditor(modal,roleSelect.value,defaultPermissions(roleSelect.value)));
+
+      form.onsubmit=async event=>{
+        event.preventDefault();
+        const data=Object.fromEntries(new FormData(form));
+        data.permissions={};
+        ALL_PERMISSION_KEYS.forEach(key=>{
+          const input=modal.querySelector(`[data-permission-key="${key}"]`);
+          data.permissions[key]=roleSelect.value==='admin'?true:!!input?.checked;
+        });
+        if(user)data.active=form.elements.active.checked;
+        try{
+          const result=await requestApi(user?`/api/users/${encodeURIComponent(user.id)}`:'/api/users',{method:user?'PATCH':'POST',body:JSON.stringify(data)});
+          if(user?.id===currentUser?.id){
+            currentUser=result.user;sessionStorage.setItem(USER_KEY,JSON.stringify(currentUser));
+          }
+          close();toast('Учетная запись и права доступа сохранены.','success');loadUsers();
+        }catch(error){form.querySelector('.form-error').innerHTML=`<div class="error">${esc(error.message)}</div>`}
+      };
+    });
   }
 
   window.apiModal=function(){
