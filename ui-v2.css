@@ -684,6 +684,17 @@ button:focus-visible,input:focus-visible,select:focus-visible,textarea:focus-vis
   background:#f8f9fc!important;color:#657086!important;font-size:8px!important;font-weight:700!important;
 }
 .zone-side-edit:hover{border-color:#cbd1ff!important;background:var(--ui-accent-soft)!important;color:var(--ui-accent-strong)!important}
+.zone-map-edit{cursor:pointer}
+.zone-map-edit rect{
+  fill:#fff!important;fill-opacity:.94!important;stroke:#c8cfdd!important;stroke-width:1!important;
+  vector-effect:non-scaling-stroke;
+}
+.zone-map-edit text{
+  fill:#58647a!important;stroke:none!important;font-size:13px!important;font-weight:800!important;
+  pointer-events:none!important;
+}
+.zone-map-edit:hover rect{fill:#eef0ff!important;stroke:#7c88ed!important}
+.zone-map-edit:hover text{fill:#4657d9!important}
 
 /* Google Sheets feed and clearer transfer source */
 .sheet-feed{display:grid;gap:12px}
