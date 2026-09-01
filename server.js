@@ -14,6 +14,8 @@ const DB_PATH = path.join(DATA_DIR, 'b-fbs.sqlite');
 const SESSION_TTL_MS = Number(process.env.BFBS_SESSION_HOURS || 24) * 60 * 60 * 1000;
 const MAX_BODY = 10 * 1024 * 1024;
 const ROLES = new Set(['admin', 'manager', 'picker', 'auditor']);
+const GOOGLE_SHEET_ID = process.env.BFBS_GOOGLE_SHEET_ID || '1oaf7MiFLdMpOI-syYOaJEeXpIyGRLzkGkUXvlMbJroU';
+const GOOGLE_SHEET_GID = process.env.BFBS_GOOGLE_SHEET_GID || '0';
 
 fs.mkdirSync(DATA_DIR, {recursive:true});
 const db = new DatabaseSync(DB_PATH);
@@ -143,6 +145,40 @@ function validateUserInput(body, editing = false){
   return {login, name, role, password};
 }
 
+async function googleSummaryItems(){
+  const controller = new AbortController();
+  const timeout = setTimeout(()=>controller.abort(), 8000);
+  const url = `https://docs.google.com/spreadsheets/d/${encodeURIComponent(GOOGLE_SHEET_ID)}/export?format=csv&gid=${encodeURIComponent(GOOGLE_SHEET_GID)}`;
+  let response;
+  try{
+    response = await fetch(url, {signal:controller.signal, redirect:'follow', headers:{'User-Agent':'B-FBS/1.0'}});
+  }finally{
+    clearTimeout(timeout);
+  }
+  if(!response.ok) throw Object.assign(new Error(`Google Sheets вернул ошибку ${response.status}.`), {status:502});
+  const text = await response.text();
+  if(!text.trim() || /<html[\s>]/i.test(text.slice(0,500))){
+    throw Object.assign(new Error('Таблица Google Sheets недоступна без авторизации. Откройте доступ по ссылке или настройте серверный доступ.'), {status:502});
+  }
+  let workbook;
+  try{workbook = XLSX.read(text, {type:'string', raw:false})}catch(_){throw Object.assign(new Error('Не удалось прочитать «Сводную» Google Sheets.'), {status:502})}
+  const sheet = workbook.Sheets[workbook.SheetNames[0]];
+  const rows = sheet ? XLSX.utils.sheet_to_json(sheet, {header:1, raw:false, defval:''}) : [];
+  const items = new Map();
+  rows.forEach(row=>{
+    const barcode = String(row?.[0] || '').replace(/\.0$/, '').trim();
+    if(!/^\d{8,20}$/.test(barcode)) return;
+    const article = String(row?.[1] || '').trim();
+    const size = String(row?.[4] || '').trim();
+    const packed = Number(String(row?.[9] || '0').replace(/\s/g,'').replace(',','.')) || 0;
+    const key = [barcode,article,size].join('|');
+    const existing = items.get(key) || {barcode,article,size,packed:0};
+    existing.packed += packed;
+    items.set(key,existing);
+  });
+  return [...items.values()].sort((a,b)=>String(a.article).localeCompare(String(b.article),'ru')||String(a.size).localeCompare(String(b.size),'ru'));
+}
+
 async function api(req, res, pathname){
   if(req.method === 'GET' && pathname === '/api/health'){
     send(res, 200, {ok:true, service:'B-FBS', database:'sqlite', time:now(), wbConfigured:!!process.env.WB_API_TOKEN});
@@ -260,6 +296,16 @@ async function api(req, res, pathname){
     const user = requireUser(req, res, ['admin','manager']); if(!user)return;
     send(res,200,{configured:!!process.env.WB_API_TOKEN,message:process.env.WB_API_TOKEN?'Ключ задан на сервере.':'Задайте WB_API_TOKEN в окружении сервера.'});return;
   }
+  if(req.method === 'GET' && pathname === '/api/google-sheet/summary'){
+    const user = requireUser(req, res); if(!user)return;
+    try{
+      const items = await googleSummaryItems();
+      send(res,200,{items,spreadsheetId:GOOGLE_SHEET_ID,gid:GOOGLE_SHEET_GID,updatedAt:now()});
+    }catch(error){
+      send(res,error.status||502,{error:error.message||'Не удалось получить Google Sheets.'});
+    }
+    return;
+  }
   if(req.method === 'POST' && pathname === '/api/import/preview'){
     const user = requireUser(req, res, ['admin','manager']); if(!user)return;
     const body = await readBody(req);
@@ -298,7 +344,7 @@ function staticFile(req, res, pathname){
     'Cache-Control':requested === 'index.html' ? 'no-cache' : 'public, max-age=300',
     'X-Content-Type-Options':'nosniff',
     'Referrer-Policy':'same-origin',
-    'Content-Security-Policy':"default-src 'self'; img-src 'self' data:; style-src 'self' 'unsafe-inline'; script-src 'self'; connect-src 'self'"
+    'Content-Security-Policy':"default-src 'self'; img-src 'self' data:; style-src 'self' 'unsafe-inline'; script-src 'self'; connect-src 'self' https://docs.google.com"
   });
   fs.createReadStream(file).pipe(res);
 }
