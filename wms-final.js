@@ -965,23 +965,61 @@
     document.querySelectorAll('[data-edit-zone]').forEach(button=>button.onclick=()=>{if(canZones)startZoneEdit(zones.find(zone=>zone.id===button.dataset.editZone))});
   };
   function openZoneForm(zone,rect){
+    const canZones=can('zones_manage'),canBoxes=can('inventory_manage');
+    if(!zone&&!canZones){toast('У вас нет доступа к созданию зон.','warning');return}
     const value=zone||rect;
     const title=zone?'Зона хранения':'Новая зона';
     const zoneBoxes=zone?wms.boxes.filter(box=>box.warehouseId===activeWarehouseId()&&box.zoneId===zone.id):[];
-    const boxesHtml=zone?`<div class="zone-box-panel"><div class="zone-box-panel-head"><span>Коробки в зоне</span><b>${zoneBoxes.length}</b></div><div class="zone-modal-boxes">${zoneBoxes.length?zoneBoxes.map(box=>`<div class="zone-modal-box"><button type="button" class="zone-modal-box-main" data-zone-box-open="${esc(box.id)}"><span><b>${esc(box.id)}</b><small>${boxQuantity(box)} ед. · ${box.locked?'заблокирована':'активна'}</small></span><span class="zone-modal-box-arrow">→</span></button><button type="button" class="zone-modal-box-delete" data-zone-box-delete="${esc(box.id)}" title="Удалить коробку">Удалить</button></div>`).join(''):'<div class="zone-modal-box-empty">В этой зоне пока нет коробок.</div>'}</div></div>`:'';
-    openModal(title,`<form class="wms-form" id="zone-form"><label>Название<input name="name" value="${esc(zone?.name||`Зона ${zones.length+1}`)}" required></label><label>Вместимость, коробок<input name="capacity" type="number" min="0" value="${Number(zone?.capacity||0)}"><small>0 — без ограничения</small></label><div class="four-fields"><label>X, м<input name="x" type="number" min="0" step=".1" value="${(value.x*SCALE).toFixed(1)}"></label><label>Y, м<input name="y" type="number" min="0" step=".1" value="${(value.y*SCALE).toFixed(1)}"></label><label>Ширина, м<input name="w" type="number" min="1" step=".1" value="${(value.w*SCALE).toFixed(1)}"></label><label>Длина, м<input name="h" type="number" min="1" step=".1" value="${(value.h*SCALE).toFixed(1)}"></label></div>${zone?`<label class="check-row"><input name="locked" type="checkbox" ${zone.locked?'checked':''}> Заблокировать размещение</label>${boxesHtml}`:''}<div class="form-error"></div><div class="modal-actions">${zone?'<button type="button" class="btn" id="zone-add-box">+ Коробка</button><button type="button" class="btn danger-outline" id="zone-delete">Удалить зону</button>':''}<button type="button" class="btn" data-close>Отмена</button><button class="btn primary">Сохранить</button></div></form>`,(modal,close)=>{
-      modal.querySelector('#zone-add-box')?.addEventListener('click',()=>{if(zone.locked){toast('Зона заблокирована.','warning');return}close();openBoxForm(null,zone.id)});
-      modal.querySelector('#zone-delete')?.addEventListener('click',()=>{const count=wms.boxes.filter(box=>box.warehouseId===activeWarehouseId()&&box.zoneId===zone.id).length;if(count){toast('Сначала переместите или удалите коробки из зоны.','warning');return}if(confirm(`Удалить зону «${zone.name}»?`)){zones.splice(zones.indexOf(zone),1);persist();close();render()}});
+    const boxesHtml=zone?`<div class="zone-box-panel"><div class="zone-box-panel-head"><span>Коробки в зоне</span><b>${zoneBoxes.length}</b></div><div class="zone-modal-boxes">${zoneBoxes.length?zoneBoxes.map(box=>`<div class="zone-modal-box"><button type="button" class="zone-modal-box-main" data-zone-box-open="${esc(box.id)}"><span><b>${esc(box.id)}</b><small>${boxQuantity(box)} ед. · ${box.locked?'заблокирована':'активна'}</small></span><span class="zone-modal-box-arrow">→</span></button>${canBoxes?`<button type="button" class="zone-modal-box-delete" data-zone-box-delete="${esc(box.id)}" title="Удалить коробку">Удалить</button>`:''}</div>`).join(''):'<div class="zone-modal-box-empty">В этой зоне пока нет коробок.</div>'}</div></div>`:'';
+    const disabled=canZones?'':'disabled';
+    openModal(title,`<form class="wms-form" id="zone-form">
+      ${!canZones&&zone?'<div class="access-readonly-note">Только просмотр · изменение зоны отключено администратором.</div>':''}
+      <label>Название<input name="name" value="${esc(zone?.name||`Зона ${zones.length+1}`)}" ${disabled} required></label>
+      <label>Вместимость, коробок<input name="capacity" type="number" min="0" value="${Number(zone?.capacity||0)}" ${disabled}><small>0 — без ограничения</small></label>
+      <div class="four-fields">
+        <label>X, м<input name="x" type="number" min="0" step=".1" value="${(value.x*SCALE).toFixed(1)}" ${disabled}></label>
+        <label>Y, м<input name="y" type="number" min="0" step=".1" value="${(value.y*SCALE).toFixed(1)}" ${disabled}></label>
+        <label>Ширина, м<input name="w" type="number" min="1" step=".1" value="${(value.w*SCALE).toFixed(1)}" ${disabled}></label>
+        <label>Длина, м<input name="h" type="number" min="1" step=".1" value="${(value.h*SCALE).toFixed(1)}" ${disabled}></label>
+      </div>
+      ${zone?`<label class="check-row"><input name="locked" type="checkbox" ${zone.locked?'checked':''} ${disabled}> Заблокировать размещение</label>${boxesHtml}`:''}
+      <div class="form-error"></div>
+      <div class="modal-actions">
+        ${zone&&canBoxes?'<button type="button" class="btn" id="zone-add-box">+ Коробка</button>':''}
+        ${zone&&canZones?'<button type="button" class="btn danger-outline" id="zone-delete">Удалить зону</button>':''}
+        <button type="button" class="btn" data-close>${canZones?'Отмена':'Закрыть'}</button>
+        ${canZones?'<button class="btn primary">Сохранить</button>':''}
+      </div>
+    </form>`,(modal,close)=>{
+      modal.querySelector('#zone-add-box')?.addEventListener('click',()=>{
+        if(!requireClientPermission('inventory_manage','У вас нет доступа к созданию коробок.'))return;
+        if(zone.locked){toast('Зона заблокирована.','warning');return}close();openBoxForm(null,zone.id)
+      });
+      modal.querySelector('#zone-delete')?.addEventListener('click',()=>{
+        if(!requireClientPermission('zones_manage','У вас нет доступа к удалению зон.'))return;
+        const count=wms.boxes.filter(box=>box.warehouseId===activeWarehouseId()&&box.zoneId===zone.id).length;
+        if(count){toast('Сначала переместите или удалите коробки из зоны.','warning');return}
+        if(confirm(`Удалить зону «${zone.name}»?`)){
+          zones.splice(zones.indexOf(zone),1);persist();saveWms(`Удалена зона ${zone.name}`);close();render()
+        }
+      });
       modal.querySelectorAll('[data-zone-box-open]').forEach(button=>button.addEventListener('click',()=>{const boxId=button.dataset.zoneBoxOpen;close();openBox(boxId)}));
       modal.querySelectorAll('[data-zone-box-delete]').forEach(button=>button.addEventListener('click',()=>{
+        if(!requireClientPermission('inventory_manage','У вас нет доступа к удалению коробок.'))return;
         const box=wms.boxes.find(item=>item.id===button.dataset.zoneBoxDelete);
         if(!box||!deleteBox(box))return;
-        const zoneId=zone.id;
-        close();
-        render();
+        const zoneId=zone.id;close();render();
         requestAnimationFrame(()=>{const current=zones.find(item=>item.id===zoneId);if(current)openZoneForm(current)});
       }));
-      modal.querySelector('form').onsubmit=event=>{event.preventDefault();const form=event.currentTarget,data=Object.fromEntries(new FormData(form)),geometry={x:Number(data.x)/SCALE,y:Number(data.y)/SCALE,w:Number(data.w)/SCALE,h:Number(data.h)/SCALE};if(!validZone(geometry,zone?.id)){form.querySelector('.form-error').innerHTML='<div class="error">Зона выходит за границы склада или пересекает другую зону.</div>';return}if(zone)Object.assign(zone,geometry,{name:data.name.trim(),capacity:Number(data.capacity)||0,locked:form.elements.locked.checked});else zones.push({id:uid('ZONE'),...geometry,name:data.name.trim(),capacity:Number(data.capacity)||0,locked:false,createdAt:new Date().toISOString()});persist();saveWms(`${zone?'Изменена':'Создана'} зона ${data.name.trim()}`);close();render()};
+      const form=modal.querySelector('form');
+      if(canZones)form.onsubmit=event=>{
+        event.preventDefault();
+        const data=Object.fromEntries(new FormData(form)),geometry={x:Number(data.x)/SCALE,y:Number(data.y)/SCALE,w:Number(data.w)/SCALE,h:Number(data.h)/SCALE};
+        if(!validZone(geometry,zone?.id)){form.querySelector('.form-error').innerHTML='<div class="error">Зона выходит за границы склада или пересекает другую зону.</div>';return}
+        if(zone)Object.assign(zone,geometry,{name:data.name.trim(),capacity:Number(data.capacity)||0,locked:form.elements.locked.checked});
+        else zones.push({id:uid('ZONE'),...geometry,name:data.name.trim(),capacity:Number(data.capacity)||0,locked:false,createdAt:new Date().toISOString()});
+        persist();saveWms(`${zone?'Изменена':'Создана'} зона ${data.name.trim()}`);close();render()
+      };
     });
   }
 
