@@ -256,8 +256,13 @@
 
     if(publishedMode){
       requestAnimationFrame(function(){
-        if(sourceChanged && !presentationMode) window.fitView();
-        else syncPublishedCanvas();
+        const needsFit=!!window.__bfbsWorkspaceNeedsFit;
+        if(sourceChanged && !presentationMode && needsFit){
+          window.__bfbsWorkspaceNeedsFit=false;
+          window.fitView();
+        }else{
+          syncPublishedCanvas();
+        }
       });
     }
   }
