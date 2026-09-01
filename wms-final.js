@@ -335,7 +335,7 @@
   function zonesSvg(){
     if(workspaceMode!=='management')return '';
     const warehouseId=activeWarehouseId();
-    return zones.map(zone=>{const count=wms.boxes.filter(box=>box.warehouseId===warehouseId&&box.zoneId===zone.id).length;return `<g class="wms-zone ${zone.locked?'locked':''}" data-zone-id="${esc(zone.id)}"><rect x="${zone.x}" y="${zone.y}" width="${zone.w}" height="${zone.h}" rx="8"/><text x="${zone.x+12}" y="${zone.y+24}">${esc(zone.name)}</text><text class="zone-count" x="${zone.x+12}" y="${zone.y+43}">${count} кор. · лимит ${Number(zone.capacity||0)||'∞'}</text>${wms.boxes.filter(box=>box.warehouseId===warehouseId&&box.zoneId===zone.id).slice(0,18).map((box,index)=>{const col=index%6,row=Math.floor(index/6);return `<circle class="box-dot" data-box-id="${esc(box.id)}" cx="${zone.x+18+col*18}" cy="${zone.y+zone.h-16-row*18}" r="6"><title>${esc(box.id)} · ${boxQuantity(box)} ед.</title></circle>`}).join('')}</g>`}).join('');
+    return zones.map(zone=>{const count=wms.boxes.filter(box=>box.warehouseId===warehouseId&&box.zoneId===zone.id).length;const edit=zone.w>=90&&zone.h>=55?`<g class="zone-map-edit" data-edit-zone-map="${esc(zone.id)}" transform="translate(${zone.x+zone.w-34} ${zone.y+8})"><rect width="26" height="22" rx="6"/><text x="13" y="15" text-anchor="middle">✎</text></g>`:'';return `<g class="wms-zone ${zone.locked?'locked':''}" data-zone-id="${esc(zone.id)}"><rect x="${zone.x}" y="${zone.y}" width="${zone.w}" height="${zone.h}" rx="8"/><text x="${zone.x+12}" y="${zone.y+24}">${esc(zone.name)}</text><text class="zone-count" x="${zone.x+12}" y="${zone.y+43}">${count} кор. · лимит ${Number(zone.capacity||0)||'∞'}</text>${edit}${wms.boxes.filter(box=>box.warehouseId===warehouseId&&box.zoneId===zone.id).slice(0,18).map((box,index)=>{const col=index%6,row=Math.floor(index/6);return `<circle class="box-dot" data-box-id="${esc(box.id)}" cx="${zone.x+18+col*18}" cy="${zone.y+zone.h-16-row*18}" r="6"><title>${esc(box.id)} · ${boxQuantity(box)} ед.</title></circle>`}).join('')}</g>`}).join('');
   }
   window.renderObjects=function(objects){return originalRenderObjects(objects)+zonesSvg()};
   function publishedBoundsLocal(){
@@ -369,6 +369,7 @@
   };
   window.onFloorClick=function(event){
     const boxNode=event.target.closest?.('[data-box-id]');if(boxNode){event.preventDefault();event.stopPropagation();openBox(boxNode.dataset.boxId);return}
+    const editZoneNode=event.target.closest?.('[data-edit-zone-map]');if(editZoneNode){event.preventDefault();event.stopPropagation();openZoneForm(zones.find(zone=>zone.id===editZoneNode.dataset.editZoneMap));return}
     const zoneNode=event.target.closest?.('[data-zone-id]');if(zoneNode){event.preventDefault();event.stopPropagation();openZoneForm(zones.find(zone=>zone.id===zoneNode.dataset.zoneId));return}
     return originalFloorClick(event);
   };
