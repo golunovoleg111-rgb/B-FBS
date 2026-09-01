@@ -1272,3 +1272,48 @@ body.scanner-mode-active{overflow:hidden!important}
 @media(max-width:420px){
   .scanner-route{grid-template-columns:1fr}
 }
+
+
+/* PR#39 — granular employee permissions */
+.permission-count{
+  display:inline-flex;align-items:center;min-height:22px;padding:3px 8px;border-radius:999px;
+  background:#f0f2f7;color:#5f6a7d;font-size:8px;font-weight:780;white-space:nowrap;
+}
+.user-access-form{max-width:820px}
+.user-fields-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px}
+.permission-editor{
+  margin-top:4px;padding:13px;border:1px solid #dfe4ec;border-radius:13px;background:#f8f9fb;
+  display:grid;gap:13px;
+}
+.permission-editor-head{display:flex;align-items:flex-start;justify-content:space-between;gap:12px}
+.permission-editor-head>div{display:grid;gap:4px}
+.permission-editor-head b{font-size:11px;color:#1b2333}
+.permission-editor-head small{font-size:8px;line-height:1.5;color:#7f899a}
+.permission-reset{flex:0 0 auto}
+.permission-group{display:grid;gap:7px}
+.permission-group-title{
+  font-size:8px;font-weight:850;letter-spacing:.08em;text-transform:uppercase;color:#7b8597;
+}
+.permission-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:7px}
+.permission-item{
+  min-height:58px;padding:9px 10px;border:1px solid #e1e5ec;border-radius:10px;background:#fff;
+  display:grid!important;grid-template-columns:auto 1fr;align-items:start;gap:9px;cursor:pointer;
+}
+.permission-item>input{margin-top:2px;width:16px;height:16px;accent-color:#4657d9}
+.permission-item>span{display:grid;gap:3px}
+.permission-item b{font-size:9px;color:#253047}
+.permission-item small{font-size:7px;line-height:1.45;color:#828c9d}
+.permission-item:has(input:checked){border-color:#b9c2f4;background:#f5f6ff}
+.permission-item.locked{opacity:.75;cursor:default}
+.permission-admin-note{
+  padding:9px 10px;border-radius:9px;background:#eef6ff;color:#4d6387;font-size:8px;line-height:1.5;
+}
+.access-readonly-note{
+  padding:9px 10px;border:1px solid #dfe4ec;border-radius:9px;background:#f5f7fa;
+  color:#687386;font-size:8px;font-weight:740;
+}
+@media(max-width:700px){
+  .user-fields-grid,.permission-grid{grid-template-columns:1fr}
+  .permission-editor-head{align-items:stretch;flex-direction:column}
+  .permission-reset{width:100%}
+}

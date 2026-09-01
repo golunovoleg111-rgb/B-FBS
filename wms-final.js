@@ -10,12 +10,30 @@
   const WAREHOUSE_KEY='b-fbs-warehouses-v1';
   const ACTIVE_WAREHOUSE_KEY='b-fbs-active-warehouse';
   const ROLE_NAMES={admin:'Администратор',manager:'Менеджер',picker:'Сборщик',auditor:'Ревизор'};
-  const ROLE_TABS={
-    admin:['dashboard','workspace','inventory','transfer','revision','account','tasks'],
-    manager:['dashboard','workspace','inventory','transfer','revision','tasks'],
-    picker:['dashboard','workspace','inventory','transfer','tasks'],
-    auditor:['dashboard','workspace','inventory','revision']
+  const PERMISSION_LABELS={
+    dashboard_view:['Главный экран','Просмотр оперативной сводки'],
+    workspace_view:['Рабочее пространство','Просмотр схемы склада, зон и коробок'],
+    layout_manage:['Планировка склада','Создание складов, изменение стен, объектов и публикация схемы'],
+    zones_manage:['Зоны хранения','Создание, перемещение, изменение, заморозка и удаление зон'],
+    inventory_view:['Учет склада','Просмотр номенклатуры, коробок и остатков'],
+    inventory_manage:['Коробки и остатки','Создание/удаление коробок, ручное и массовое пополнение'],
+    nomenclature_manage:['Номенклатура','Импорт и изменение номенклатуры WB'],
+    transfers_view:['Перемещения','Просмотр заявок на перемещение'],
+    transfers_manage:['Управление перемещениями','Создание, отправка, прием и отмена заявок'],
+    revisions_view:['Ревизия','Просмотр заданий ревизии'],
+    revisions_manage:['Проведение ревизии','Создание и выполнение ревизий'],
+    tasks_view:['Сборочные задания','Просмотр сборочных заданий'],
+    tasks_manage:['Управление заданиями','Создание и завершение сборочных заданий'],
+    tasks_pick:['Сборка сканером','Scanner Mode и списание товара по заданию']
   };
+  const ALL_PERMISSION_KEYS=Object.keys(PERMISSION_LABELS);
+  const ROLE_PERMISSION_DEFAULTS={
+    admin:Object.fromEntries(ALL_PERMISSION_KEYS.map(key=>[key,true])),
+    manager:{dashboard_view:true,workspace_view:true,layout_manage:true,zones_manage:true,inventory_view:true,inventory_manage:true,nomenclature_manage:true,transfers_view:true,transfers_manage:true,revisions_view:true,revisions_manage:true,tasks_view:true,tasks_manage:true,tasks_pick:true},
+    picker:{dashboard_view:true,workspace_view:true,layout_manage:false,zones_manage:false,inventory_view:true,inventory_manage:false,nomenclature_manage:false,transfers_view:true,transfers_manage:true,revisions_view:false,revisions_manage:false,tasks_view:true,tasks_manage:false,tasks_pick:true},
+    auditor:{dashboard_view:true,workspace_view:true,layout_manage:false,zones_manage:false,inventory_view:true,inventory_manage:false,nomenclature_manage:false,transfers_view:false,transfers_manage:false,revisions_view:true,revisions_manage:true,tasks_view:false,tasks_manage:false,tasks_pick:false}
+  };
+  const TAB_PERMISSION={dashboard:'dashboard_view',workspace:'workspace_view',inventory:'inventory_view',transfer:'transfers_view',revision:'revisions_view',tasks:'tasks_view'};
   const EMPTY_WMS={nomenclature:[],boxes:[],transfers:[],revisions:[],tasks:[],movements:[],events:[]};
   let wms=loadWms();
   let currentUser=readJson(sessionStorage.getItem(USER_KEY),null);
@@ -33,7 +51,16 @@
   function uid(prefix){return `${prefix}-${Date.now().toString(36)}-${crypto.getRandomValues(new Uint32Array(1))[0].toString(36)}`.toUpperCase()}
   function dateText(value){return value?new Date(value).toLocaleString('ru-RU'):'—'}
   function roleName(role){return ROLE_NAMES[role]||role||'Сотрудник'}
-  function allowed(tab){return (ROLE_TABS[currentUser?.role||'admin']||ROLE_TABS.picker).includes(tab)}
+  function defaultPermissions(role){return {...(ROLE_PERMISSION_DEFAULTS[role]||ROLE_PERMISSION_DEFAULTS.picker)}}
+  function userPermissions(user=currentUser){return user?.role==='admin'?defaultPermissions('admin'):{...defaultPermissions(user?.role||'picker'),...(user?.permissions||{})}}
+  function can(permission,user=currentUser){return user?.role==='admin'||!!userPermissions(user)[permission]}
+  function allowed(tab){
+    if(tab==='account')return currentUser?.role==='admin';
+    const permission=TAB_PERMISSION[tab];return permission?can(permission):false;
+  }
+  function requireClientPermission(permission,message='Недостаточно прав для этой операции.'){
+    if(can(permission))return true;toast(message,'warning');return false;
+  }
   function warehouses(){return readJson(localStorage.getItem(WAREHOUSE_KEY),[])||[]}
   function activeWarehouseId(){
     const select=document.getElementById('warehouse-select');
@@ -108,12 +135,17 @@
     if(!backendAvailable||!token())return false;
     if(!force&&localStorage.getItem(PENDING_KEY)==='1')return false;
     const result=await requestApi('/api/state');
+    let userChanged=false;
+    if(result.user&&JSON.stringify(result.user)!==JSON.stringify(currentUser)){
+      currentUser=result.user;sessionStorage.setItem(USER_KEY,JSON.stringify(currentUser));userChanged=true;
+      if(!allowed(activeTab))activeTab='dashboard';
+    }
     if(result.revision===0&&!result.state?.warehouses&&warehouses().length){serverRevision=0;await pushState();return true}
     if(force||result.revision>serverRevision){
       applyState(result.state);serverRevision=result.revision;localStorage.setItem(REVISION_KEY,String(serverRevision));localStorage.removeItem(PENDING_KEY);
       return true;
     }
-    return false;
+    return userChanged;
   }
   async function pollState(){
     clearTimeout(pollTimer);
@@ -190,7 +222,7 @@
 
   function inventoryView(){
     const current=activeWarehouseId()||warehouses()[0]?.id||'';
-    return `<section class="wms-page"><div class="wms-page-head"><div><h2>Учет склада</h2><p>Только фактическое хранение в выбранном складе: зоны, коробки и остатки.</p></div><div class="wms-actions">${currentUser?.role==='admin'||currentUser?.role==='manager'?'<button class="btn" id="import-nomenclature">Импорт WB</button>':''}<button class="btn" id="bulk-replenish">Массовое пополнение</button><button class="btn primary" id="stock-replenish">Пополнение</button></div></div><div class="inventory-warehouse-bar"><div><span>Рабочий склад</span><strong id="inventory-warehouse-name">${esc(warehouseName(current))}</strong></div><select id="inventory-warehouse">${warehouses().map(item=>`<option value="${esc(item.id)}" ${item.id===current?'selected':''}>${esc(item.name)}</option>`).join('')}</select></div><div class="wms-filters inventory-storage-filters"><div class="quick-search"><input id="inventory-search" autocomplete="off" placeholder="Поиск внутри выбранного склада: ШК, артикул, размер, зона или коробка"><div id="inventory-quick-results" class="quick-search-results" hidden></div></div></div><div class="wms-table-wrap"><table class="wms-table"><thead><tr><th>ШК</th><th>Артикул</th><th>Размер</th><th>Количество</th><th>Зона</th><th>Коробка</th><th>Обновлено</th></tr></thead><tbody id="inventory-body"></tbody></table></div></section>`;
+    return `<section class="wms-page"><div class="wms-page-head"><div><h2>Учет склада</h2><p>Только фактическое хранение в выбранном складе: зоны, коробки и остатки.</p></div><div class="wms-actions">${can('nomenclature_manage')?'<button class="btn" id="import-nomenclature">Импорт WB</button>':''}${can('inventory_manage')?'<button class="btn" id="bulk-replenish">Массовое пополнение</button><button class="btn primary" id="stock-replenish">Пополнение</button>':''}</div></div><div class="inventory-warehouse-bar"><div><span>Рабочий склад</span><strong id="inventory-warehouse-name">${esc(warehouseName(current))}</strong></div><select id="inventory-warehouse">${warehouses().map(item=>`<option value="${esc(item.id)}" ${item.id===current?'selected':''}>${esc(item.name)}</option>`).join('')}</select></div><div class="wms-filters inventory-storage-filters"><div class="quick-search"><input id="inventory-search" autocomplete="off" placeholder="Поиск внутри выбранного склада: ШК, артикул, размер, зона или коробка"><div id="inventory-quick-results" class="quick-search-results" hidden></div></div></div><div class="wms-table-wrap"><table class="wms-table"><thead><tr><th>ШК</th><th>Артикул</th><th>Размер</th><th>Количество</th><th>Зона</th><th>Коробка</th><th>Обновлено</th></tr></thead><tbody id="inventory-body"></tbody></table></div></section>`;
   }
 
   function accountView(){
@@ -331,6 +363,7 @@
     return XLSX.utils.sheet_to_json(workbook.Sheets[sheetName],{header:1,raw:false,defval:''});
   }
   function openImport(){
+    if(!requireClientPermission('nomenclature_manage','Импорт номенклатуры для вашей учетной записи отключен.'))return;
     openModal('Импорт номенклатуры WB',`<p>Загрузите CSV, TSV, XLSX или XLS. Excel обрабатывается прямо на этом устройстве и работает в автономном режиме. Будут использованы только столбцы «Артикул», «Баркод» и «Размер».</p><div class="import-drop"><input id="wb-file" type="file" accept=".csv,.tsv,.txt,.xlsx,.xls"><div id="import-preview">Файл не выбран</div></div><div class="modal-actions"><button class="btn" data-close>Отмена</button><button class="btn primary" id="confirm-import" disabled>Импортировать</button></div>`,(modal,close)=>{
       let parsed=[];const input=modal.querySelector('#wb-file'),preview=modal.querySelector('#import-preview'),confirm=modal.querySelector('#confirm-import');
       input.onchange=async()=>{
@@ -367,8 +400,17 @@
     });
   }
 
+  function permissionCount(user){
+    const permissions=userPermissions(user);
+    return ALL_PERMISSION_KEYS.filter(key=>permissions[key]).length;
+  }
   async function loadUsers(){
-    const host=document.getElementById('users-content');if(!host||!backendAvailable)return;try{const result=await requestApi('/api/users');host.innerHTML=`<div class="wms-table-wrap"><table class="wms-table"><thead><tr><th>Сотрудник</th><th>Логин</th><th>Роль</th><th>Последний вход</th><th>Статус</th><th></th></tr></thead><tbody>${result.users.map(user=>`<tr><td><b>${esc(user.name)}</b></td><td>${esc(user.login)}</td><td>${esc(roleName(user.role))}</td><td>${dateText(user.lastLoginAt)}</td><td><span class="status-pill ${user.active?'ok':'muted'}">${user.active?'Активен':'Отключен'}</span></td><td><button class="table-link" data-edit-user="${esc(user.id)}">Изменить</button></td></tr>`).join('')}</tbody></table></div>`;host.querySelectorAll('[data-edit-user]').forEach(button=>button.onclick=()=>openUserForm(result.users.find(user=>user.id===button.dataset.editUser)))}catch(error){host.innerHTML=empty(error.message)}
+    const host=document.getElementById('users-content');if(!host||!backendAvailable)return;
+    try{
+      const result=await requestApi('/api/users');
+      host.innerHTML=`<div class="wms-table-wrap"><table class="wms-table"><thead><tr><th>Сотрудник</th><th>Логин</th><th>Роль</th><th>Доступ</th><th>Последний вход</th><th>Статус</th><th></th></tr></thead><tbody>${result.users.map(user=>`<tr><td><b>${esc(user.name)}</b></td><td>${esc(user.login)}</td><td>${esc(roleName(user.role))}</td><td><span class="permission-count">${user.role==='admin'?'Полный':permissionCount(user)+' / '+ALL_PERMISSION_KEYS.length}</span></td><td>${dateText(user.lastLoginAt)}</td><td><span class="status-pill ${user.active?'ok':'muted'}">${user.active?'Активен':'Отключен'}</span></td><td><button class="table-link" data-edit-user="${esc(user.id)}">Изменить доступ</button></td></tr>`).join('')}</tbody></table></div>`;
+      host.querySelectorAll('[data-edit-user]').forEach(button=>button.onclick=()=>openUserForm(result.users.find(user=>user.id===button.dataset.editUser)));
+    }catch(error){host.innerHTML=empty(error.message)}
   }
   async function loadAudit(){const host=document.getElementById('audit-content');if(!host||!backendAvailable)return;try{const result=await requestApi('/api/audit');host.innerHTML=`<div class="audit-list">${result.events.slice(0,50).map(event=>`<div><b>${esc(event.name||event.login||'Система')}</b><span>${esc(event.action)}</span><small>${dateText(event.createdAt)}</small></div>`).join('')||'Событий нет'}</div>`}catch(error){host.innerHTML=empty(error.message)}}
   function backupStateFromPayload(payload){
@@ -479,8 +521,64 @@
       }catch(error){toast(error.message,'warning')}
     });
   }
+  function permissionEditorHtml(role,permissions){
+    const values={...defaultPermissions(role),...(permissions||{})};
+    const groups=[
+      ['Разделы',['dashboard_view','workspace_view','inventory_view','transfers_view','revisions_view','tasks_view']],
+      ['Склад и хранение',['layout_manage','zones_manage','inventory_manage','nomenclature_manage']],
+      ['Операции',['transfers_manage','revisions_manage','tasks_manage','tasks_pick']]
+    ];
+    const locked=role==='admin';
+    return `<div class="permission-editor" id="permission-editor">
+      <div class="permission-editor-head"><div><b>Доступ сотрудника</b><small>Роль задает стартовый шаблон. Ниже можно включить или отключить каждую функцию отдельно.</small></div><button type="button" class="btn permission-reset" id="permission-reset" ${locked?'disabled':''}>Сбросить по роли</button></div>
+      ${groups.map(([title,keys])=>`<div class="permission-group"><div class="permission-group-title">${title}</div><div class="permission-grid">${keys.map(key=>{const [label,note]=PERMISSION_LABELS[key];return `<label class="permission-item ${locked?'locked':''}"><input type="checkbox" data-permission-key="${key}" ${values[key]?'checked':''} ${locked?'disabled':''}><span><b>${esc(label)}</b><small>${esc(note)}</small></span></label>`}).join('')}</div></div>`).join('')}
+      ${locked?'<div class="permission-admin-note">У роли «Администратор» всегда полный доступ. Это нельзя отключить отдельными переключателями.</div>':''}
+    </div>`;
+  }
+  function syncPermissionEditor(modal,role,permissions){
+    const host=modal.querySelector('#permission-editor');
+    if(!host)return;
+    const wrapper=document.createElement('div');
+    wrapper.innerHTML=permissionEditorHtml(role,permissions);
+    host.replaceWith(wrapper.firstElementChild);
+    modal.querySelector('#permission-reset')?.addEventListener('click',()=>syncPermissionEditor(modal,role,defaultPermissions(role)));
+  }
   function openUserForm(user){
-    openModal(user?'Сотрудник':'Новый сотрудник',`<form class="wms-form" id="user-form"><label>Имя<input name="name" value="${esc(user?.name||'')}" required></label><label>Логин<input name="login" value="${esc(user?.login||'')}" required></label><label>Роль<select name="role">${Object.entries(ROLE_NAMES).map(([value,label])=>`<option value="${value}" ${user?.role===value?'selected':''}>${label}</option>`).join('')}</select></label><label>Пароль ${user?'<small>оставьте пустым без изменения</small>':''}<input name="password" type="password" ${user?'':'required'} minlength="8"></label>${user?`<label class="check-row"><input name="active" type="checkbox" ${user.active?'checked':''}> Учетная запись активна</label>`:''}<div class="form-error"></div><div class="modal-actions"><button type="button" class="btn" data-close>Отмена</button><button class="btn primary">Сохранить</button></div></form>`,(modal,close)=>{modal.querySelector('form').onsubmit=async event=>{event.preventDefault();const form=event.currentTarget,data=Object.fromEntries(new FormData(form));if(user)data.active=form.elements.active.checked;try{await requestApi(user?`/api/users/${encodeURIComponent(user.id)}`:'/api/users',{method:user?'PATCH':'POST',body:JSON.stringify(data)});close();toast('Учетная запись сохранена.','success');loadUsers()}catch(error){form.querySelector('.form-error').innerHTML=`<div class="error">${esc(error.message)}</div>`}}});
+    const initialRole=user?.role||'picker';
+    openModal(user?'Сотрудник':'Новый сотрудник',`<form class="wms-form user-access-form" id="user-form">
+      <div class="user-fields-grid">
+        <label>Имя<input name="name" value="${esc(user?.name||'')}" required></label>
+        <label>Логин<input name="login" value="${esc(user?.login||'')}" required></label>
+        <label>Роль<select name="role">${Object.entries(ROLE_NAMES).map(([value,label])=>`<option value="${value}" ${initialRole===value?'selected':''}>${label}</option>`).join('')}</select></label>
+        <label>Пароль ${user?'<small>оставьте пустым без изменения</small>':''}<input name="password" type="password" ${user?'':'required'} minlength="8"></label>
+      </div>
+      ${permissionEditorHtml(initialRole,user?.permissions)}
+      ${user?`<label class="check-row"><input name="active" type="checkbox" ${user.active?'checked':''}> Учетная запись активна</label>`:''}
+      <div class="form-error"></div>
+      <div class="modal-actions"><button type="button" class="btn" data-close>Отмена</button><button class="btn primary">Сохранить</button></div>
+    </form>`,(modal,close)=>{
+      const form=modal.querySelector('form'),roleSelect=form.elements.role;
+      roleSelect.addEventListener('change',()=>syncPermissionEditor(modal,roleSelect.value,defaultPermissions(roleSelect.value)));
+      modal.querySelector('#permission-reset')?.addEventListener('click',()=>syncPermissionEditor(modal,roleSelect.value,defaultPermissions(roleSelect.value)));
+
+      form.onsubmit=async event=>{
+        event.preventDefault();
+        const data=Object.fromEntries(new FormData(form));
+        data.permissions={};
+        ALL_PERMISSION_KEYS.forEach(key=>{
+          const input=modal.querySelector(`[data-permission-key="${key}"]`);
+          data.permissions[key]=roleSelect.value==='admin'?true:!!input?.checked;
+        });
+        if(user)data.active=form.elements.active.checked;
+        try{
+          const result=await requestApi(user?`/api/users/${encodeURIComponent(user.id)}`:'/api/users',{method:user?'PATCH':'POST',body:JSON.stringify(data)});
+          if(user?.id===currentUser?.id){
+            currentUser=result.user;sessionStorage.setItem(USER_KEY,JSON.stringify(currentUser));
+          }
+          close();toast('Учетная запись и права доступа сохранены.','success');loadUsers();
+        }catch(error){form.querySelector('.form-error').innerHTML=`<div class="error">${esc(error.message)}</div>`}
+      };
+    });
   }
 
   window.apiModal=function(){
@@ -503,8 +601,16 @@
 
   window.managementPanel=function(){
     if(workspaceMode!=='management')return originalManagementPanel();
-    const canEdit=['admin','manager'].includes(currentUser?.role||'admin');
-    return `<div class="stage-indicator"><span class="stage-number">✓</span><div><b>Рабочая схема</b><small>Опубликованная версия</small></div></div><p class="hint">Зоны и коробки доступны всем сотрудникам. Изменять схему могут администратор и менеджер.</p>${canEdit?'<button class="btn primary wide" id="edit-copy">Создать копию для редактирования</button>':''}<div class="object-section"><div class="panel-title">Зоны хранения · ${zones.length}</div><p class="hint">Нарисуйте прямоугольник внутри склада. Затем задайте название и вместимость.</p>${canEdit?'<button class="btn wide" id="wms-add-zone">+ Нарисовать зону</button>':''}<div class="zone-side-list">${zones.map(zone=>`<div class="zone-side-item"><button class="zone-side-main" data-open-zone="${esc(zone.id)}"><span>${esc(zone.name)}</span><small>${wms.boxes.filter(box=>box.warehouseId===activeWarehouseId()&&box.zoneId===zone.id).length} кор.</small></button>${canEdit?`<button type="button" class="zone-side-edit" data-edit-zone="${esc(zone.id)}" title="Редактировать зону">Редактировать зону</button>`:''}</div>`).join('')||'<small>Зон пока нет</small>'}</div></div><div class="object-section"><div class="panel-title">Версии</div><div class="version-list">${versions.length?versions.slice().reverse().map(v=>`<div><b>v${v.version}</b><span>${esc(v.date)}</span></div>`).join(''):'Нет сохранённых версий'}</div></div>`;
+    const canLayout=can('layout_manage'),canZones=can('zones_manage');
+    return `<div class="stage-indicator"><span class="stage-number">✓</span><div><b>Рабочая схема</b><small>Опубликованная версия</small></div></div>
+      <p class="hint">${canLayout||canZones?'Доступ на изменение определяется персональными правами сотрудника.':'Режим просмотра: изменение планировки и зон для вашей учетной записи отключено.'}</p>
+      ${canLayout?'<button class="btn primary wide" id="edit-copy">Создать копию для редактирования</button>':''}
+      <div class="object-section"><div class="panel-title">Зоны хранения · ${zones.length}</div>
+        <p class="hint">${canZones?'Можно создавать и редактировать зоны хранения.':'Зоны доступны только для просмотра.'}</p>
+        ${canZones?'<button class="btn wide" id="wms-add-zone">+ Нарисовать зону</button>':''}
+        <div class="zone-side-list">${zones.map(zone=>`<div class="zone-side-item"><button class="zone-side-main" data-open-zone="${esc(zone.id)}"><span>${esc(zone.name)}</span><small>${wms.boxes.filter(box=>box.warehouseId===activeWarehouseId()&&box.zoneId===zone.id).length} кор.</small></button>${canZones?`<button type="button" class="zone-side-edit" data-edit-zone="${esc(zone.id)}" title="Редактировать зону">Редактировать зону</button>`:''}</div>`).join('')||'<small>Зон пока нет</small>'}</div>
+      </div>
+      <div class="object-section"><div class="panel-title">Версии</div><div class="version-list">${versions.length?versions.slice().reverse().map(v=>`<div><b>v${v.version}</b><span>${esc(v.date)}</span></div>`).join(''):'Нет сохранённых версий'}</div></div>`;
   };
   function shortenZoneName(name,maxChars){
     const value=String(name||'Зона').trim()||'Зона';
@@ -593,6 +699,7 @@
     if(zone&&geometry)Object.assign(zone,geometry);
   }
   function startZoneEdit(zone){
+    if(!requireClientPermission('zones_manage','У вас нет доступа к редактированию зон.'))return;
     if(!zone||zone.frozen)return;
     if(zoneMoveId&&zoneMoveId!==zone.id){
       toast('Сначала сохраните или отмените изменения текущей зоны.','warning');
@@ -629,6 +736,7 @@
     toast('Изменения зоны отменены.','info');
   }
   function setZoneFrozen(zone,frozen){
+    if(!requireClientPermission('zones_manage','У вас нет доступа к изменению зон.'))return;
     if(zoneMoveId===zone.id){
       toast('Сначала сохраните или отмените редактирование зоны.','warning');
       return;
@@ -644,12 +752,14 @@
       toast('Сначала сохраните или отмените изменения редактируемой зоны.','warning');
       return;
     }
-    const editing=zoneMoveId===zone.id;
+    const editing=zoneMoveId===zone.id,canZones=can('zones_manage');
     const menu=document.createElement('div');
     menu.className='zone-action-menu';
-    menu.innerHTML=editing
-      ? `<div class="zone-action-title"><b>${esc(zone.name)}</b><small>Редактирование активно${zoneEditDirty?' · есть изменения':''}</small></div><button type="button" class="zone-action-save" data-zone-menu="save">Сохранить изменения</button><button type="button" data-zone-menu="cancel">Отменить изменения</button>`
-      : `<div class="zone-action-title"><b>${esc(zone.name)}</b><small>${zone.frozen?'Зафиксирована':'Готова к работе'}</small></div><button type="button" data-zone-menu="open">Открыть зону</button><button type="button" data-zone-menu="edit" ${zone.frozen?'disabled':''}>Редактировать зону</button><button type="button" data-zone-menu="freeze">${zone.frozen?'Разморозить':'Заморозить'}</button>`;
+    if(editing&&canZones){
+      menu.innerHTML=`<div class="zone-action-title"><b>${esc(zone.name)}</b><small>Редактирование активно${zoneEditDirty?' · есть изменения':''}</small></div><button type="button" class="zone-action-save" data-zone-menu="save">Сохранить изменения</button><button type="button" data-zone-menu="cancel">Отменить изменения</button>`;
+    }else{
+      menu.innerHTML=`<div class="zone-action-title"><b>${esc(zone.name)}</b><small>${canZones?(zone.frozen?'Зафиксирована':'Готова к работе'):'Только просмотр'}</small></div><button type="button" data-zone-menu="open">Открыть зону</button>${canZones?`<button type="button" data-zone-menu="edit" ${zone.frozen?'disabled':''}>Редактировать зону</button><button type="button" data-zone-menu="freeze">${zone.frozen?'Разморозить':'Заморозить'}</button>`:''}`;
+    }
     document.body.appendChild(menu);
     const rect=menu.getBoundingClientRect();
     menu.style.left=`${Math.max(8,Math.min(window.innerWidth-rect.width-8,event.clientX+8))}px`;
@@ -843,31 +953,79 @@
   };
   window.bindWorkspace=function(){
     originalBindWorkspace();
+
+    const canLayout=can('layout_manage'),canZones=can('zones_manage');
+    ['new-warehouse','rename-warehouse','delete-warehouse','edit-copy','warehouse-size','clear-draft','to-objects','back-to-walls','save-design','change-layout'].forEach(id=>{
+      const element=document.getElementById(id);if(element&&!canLayout){element.disabled=true;element.hidden=true}
+    });
+    if(!canLayout){
+      document.querySelectorAll('[data-tool],[data-object-tool],[data-object-select]').forEach(element=>{element.disabled=true;element.hidden=true});
+    }
+
     document.getElementById('wms-add-zone')?.addEventListener('click',()=>{
+      if(!requireClientPermission('zones_manage','У вас нет доступа к созданию зон.'))return;
       if(zoneMoveId){toast('Сначала сохраните или отмените редактирование зоны.','warning');return}
       zoneDraw=!zoneDraw;closeZoneMenu();const button=document.getElementById('wms-add-zone');button.classList.toggle('primary',zoneDraw);button.textContent=zoneDraw?'Рисуйте зону · шаг 0,5 м':'+ Нарисовать зону';document.getElementById('floor')?.classList.toggle('zone-drawing',zoneDraw)
     });
     document.querySelectorAll('[data-open-zone]').forEach(button=>button.onclick=()=>{if(zoneMoveId){toast('Сначала сохраните или отмените редактирование зоны.','warning');return}openZoneForm(zones.find(zone=>zone.id===button.dataset.openZone))});
-    document.querySelectorAll('[data-edit-zone]').forEach(button=>button.onclick=()=>startZoneEdit(zones.find(zone=>zone.id===button.dataset.editZone)));
+    document.querySelectorAll('[data-edit-zone]').forEach(button=>button.onclick=()=>{if(canZones)startZoneEdit(zones.find(zone=>zone.id===button.dataset.editZone))});
   };
   function openZoneForm(zone,rect){
+    const canZones=can('zones_manage'),canBoxes=can('inventory_manage');
+    if(!zone&&!canZones){toast('У вас нет доступа к созданию зон.','warning');return}
     const value=zone||rect;
     const title=zone?'Зона хранения':'Новая зона';
     const zoneBoxes=zone?wms.boxes.filter(box=>box.warehouseId===activeWarehouseId()&&box.zoneId===zone.id):[];
-    const boxesHtml=zone?`<div class="zone-box-panel"><div class="zone-box-panel-head"><span>Коробки в зоне</span><b>${zoneBoxes.length}</b></div><div class="zone-modal-boxes">${zoneBoxes.length?zoneBoxes.map(box=>`<div class="zone-modal-box"><button type="button" class="zone-modal-box-main" data-zone-box-open="${esc(box.id)}"><span><b>${esc(box.id)}</b><small>${boxQuantity(box)} ед. · ${box.locked?'заблокирована':'активна'}</small></span><span class="zone-modal-box-arrow">→</span></button><button type="button" class="zone-modal-box-delete" data-zone-box-delete="${esc(box.id)}" title="Удалить коробку">Удалить</button></div>`).join(''):'<div class="zone-modal-box-empty">В этой зоне пока нет коробок.</div>'}</div></div>`:'';
-    openModal(title,`<form class="wms-form" id="zone-form"><label>Название<input name="name" value="${esc(zone?.name||`Зона ${zones.length+1}`)}" required></label><label>Вместимость, коробок<input name="capacity" type="number" min="0" value="${Number(zone?.capacity||0)}"><small>0 — без ограничения</small></label><div class="four-fields"><label>X, м<input name="x" type="number" min="0" step=".1" value="${(value.x*SCALE).toFixed(1)}"></label><label>Y, м<input name="y" type="number" min="0" step=".1" value="${(value.y*SCALE).toFixed(1)}"></label><label>Ширина, м<input name="w" type="number" min="1" step=".1" value="${(value.w*SCALE).toFixed(1)}"></label><label>Длина, м<input name="h" type="number" min="1" step=".1" value="${(value.h*SCALE).toFixed(1)}"></label></div>${zone?`<label class="check-row"><input name="locked" type="checkbox" ${zone.locked?'checked':''}> Заблокировать размещение</label>${boxesHtml}`:''}<div class="form-error"></div><div class="modal-actions">${zone?'<button type="button" class="btn" id="zone-add-box">+ Коробка</button><button type="button" class="btn danger-outline" id="zone-delete">Удалить зону</button>':''}<button type="button" class="btn" data-close>Отмена</button><button class="btn primary">Сохранить</button></div></form>`,(modal,close)=>{
-      modal.querySelector('#zone-add-box')?.addEventListener('click',()=>{if(zone.locked){toast('Зона заблокирована.','warning');return}close();openBoxForm(null,zone.id)});
-      modal.querySelector('#zone-delete')?.addEventListener('click',()=>{const count=wms.boxes.filter(box=>box.warehouseId===activeWarehouseId()&&box.zoneId===zone.id).length;if(count){toast('Сначала переместите или удалите коробки из зоны.','warning');return}if(confirm(`Удалить зону «${zone.name}»?`)){zones.splice(zones.indexOf(zone),1);persist();close();render()}});
+    const boxesHtml=zone?`<div class="zone-box-panel"><div class="zone-box-panel-head"><span>Коробки в зоне</span><b>${zoneBoxes.length}</b></div><div class="zone-modal-boxes">${zoneBoxes.length?zoneBoxes.map(box=>`<div class="zone-modal-box"><button type="button" class="zone-modal-box-main" data-zone-box-open="${esc(box.id)}"><span><b>${esc(box.id)}</b><small>${boxQuantity(box)} ед. · ${box.locked?'заблокирована':'активна'}</small></span><span class="zone-modal-box-arrow">→</span></button>${canBoxes?`<button type="button" class="zone-modal-box-delete" data-zone-box-delete="${esc(box.id)}" title="Удалить коробку">Удалить</button>`:''}</div>`).join(''):'<div class="zone-modal-box-empty">В этой зоне пока нет коробок.</div>'}</div></div>`:'';
+    const disabled=canZones?'':'disabled';
+    openModal(title,`<form class="wms-form" id="zone-form">
+      ${!canZones&&zone?'<div class="access-readonly-note">Только просмотр · изменение зоны отключено администратором.</div>':''}
+      <label>Название<input name="name" value="${esc(zone?.name||`Зона ${zones.length+1}`)}" ${disabled} required></label>
+      <label>Вместимость, коробок<input name="capacity" type="number" min="0" value="${Number(zone?.capacity||0)}" ${disabled}><small>0 — без ограничения</small></label>
+      <div class="four-fields">
+        <label>X, м<input name="x" type="number" min="0" step=".1" value="${(value.x*SCALE).toFixed(1)}" ${disabled}></label>
+        <label>Y, м<input name="y" type="number" min="0" step=".1" value="${(value.y*SCALE).toFixed(1)}" ${disabled}></label>
+        <label>Ширина, м<input name="w" type="number" min="1" step=".1" value="${(value.w*SCALE).toFixed(1)}" ${disabled}></label>
+        <label>Длина, м<input name="h" type="number" min="1" step=".1" value="${(value.h*SCALE).toFixed(1)}" ${disabled}></label>
+      </div>
+      ${zone?`<label class="check-row"><input name="locked" type="checkbox" ${zone.locked?'checked':''} ${disabled}> Заблокировать размещение</label>${boxesHtml}`:''}
+      <div class="form-error"></div>
+      <div class="modal-actions">
+        ${zone&&canBoxes?'<button type="button" class="btn" id="zone-add-box">+ Коробка</button>':''}
+        ${zone&&canZones?'<button type="button" class="btn danger-outline" id="zone-delete">Удалить зону</button>':''}
+        <button type="button" class="btn" data-close>${canZones?'Отмена':'Закрыть'}</button>
+        ${canZones?'<button class="btn primary">Сохранить</button>':''}
+      </div>
+    </form>`,(modal,close)=>{
+      modal.querySelector('#zone-add-box')?.addEventListener('click',()=>{
+        if(!requireClientPermission('inventory_manage','У вас нет доступа к созданию коробок.'))return;
+        if(zone.locked){toast('Зона заблокирована.','warning');return}close();openBoxForm(null,zone.id)
+      });
+      modal.querySelector('#zone-delete')?.addEventListener('click',()=>{
+        if(!requireClientPermission('zones_manage','У вас нет доступа к удалению зон.'))return;
+        const count=wms.boxes.filter(box=>box.warehouseId===activeWarehouseId()&&box.zoneId===zone.id).length;
+        if(count){toast('Сначала переместите или удалите коробки из зоны.','warning');return}
+        if(confirm(`Удалить зону «${zone.name}»?`)){
+          zones.splice(zones.indexOf(zone),1);persist();saveWms(`Удалена зона ${zone.name}`);close();render()
+        }
+      });
       modal.querySelectorAll('[data-zone-box-open]').forEach(button=>button.addEventListener('click',()=>{const boxId=button.dataset.zoneBoxOpen;close();openBox(boxId)}));
       modal.querySelectorAll('[data-zone-box-delete]').forEach(button=>button.addEventListener('click',()=>{
+        if(!requireClientPermission('inventory_manage','У вас нет доступа к удалению коробок.'))return;
         const box=wms.boxes.find(item=>item.id===button.dataset.zoneBoxDelete);
         if(!box||!deleteBox(box))return;
-        const zoneId=zone.id;
-        close();
-        render();
+        const zoneId=zone.id;close();render();
         requestAnimationFrame(()=>{const current=zones.find(item=>item.id===zoneId);if(current)openZoneForm(current)});
       }));
-      modal.querySelector('form').onsubmit=event=>{event.preventDefault();const form=event.currentTarget,data=Object.fromEntries(new FormData(form)),geometry={x:Number(data.x)/SCALE,y:Number(data.y)/SCALE,w:Number(data.w)/SCALE,h:Number(data.h)/SCALE};if(!validZone(geometry,zone?.id)){form.querySelector('.form-error').innerHTML='<div class="error">Зона выходит за границы склада или пересекает другую зону.</div>';return}if(zone)Object.assign(zone,geometry,{name:data.name.trim(),capacity:Number(data.capacity)||0,locked:form.elements.locked.checked});else zones.push({id:uid('ZONE'),...geometry,name:data.name.trim(),capacity:Number(data.capacity)||0,locked:false,createdAt:new Date().toISOString()});persist();saveWms(`${zone?'Изменена':'Создана'} зона ${data.name.trim()}`);close();render()};
+      const form=modal.querySelector('form');
+      if(canZones)form.onsubmit=event=>{
+        event.preventDefault();
+        const data=Object.fromEntries(new FormData(form)),geometry={x:Number(data.x)/SCALE,y:Number(data.y)/SCALE,w:Number(data.w)/SCALE,h:Number(data.h)/SCALE};
+        if(!validZone(geometry,zone?.id)){form.querySelector('.form-error').innerHTML='<div class="error">Зона выходит за границы склада или пересекает другую зону.</div>';return}
+        if(zone)Object.assign(zone,geometry,{name:data.name.trim(),capacity:Number(data.capacity)||0,locked:form.elements.locked.checked});
+        else zones.push({id:uid('ZONE'),...geometry,name:data.name.trim(),capacity:Number(data.capacity)||0,locked:false,createdAt:new Date().toISOString()});
+        persist();saveWms(`${zone?'Изменена':'Создана'} зона ${data.name.trim()}`);close();render()
+      };
     });
   }
 
@@ -934,11 +1092,11 @@
     host.querySelectorAll('[data-sheet-transfer]').forEach(button=>button.onclick=()=>openTransferForm({barcode:button.dataset.sheetTransfer,quantity:Number(button.dataset.sheetQty)||1,source:'google-sheet'}));
   }
   function transferView(){
-    return `<section class="wms-page"><div class="wms-page-head"><div><h2>Заявки на перемещение</h2><p>Списание происходит только после «Отправить» и только из выбранной коробки-источника.</p></div>${['admin','manager'].includes(currentUser?.role)?'<button class="btn primary" id="add-transfer">+ Новая заявка</button>':''}</div><div class="wms-subsection sheet-feed"><div class="panel-head"><div><div class="panel-title">Сводная · Google Sheets</div><div class="sheet-feed-note">Трансляция A / B / E / J: ШК, артикул, размер и «Итого упаковано».</div></div><button type="button" class="btn" id="refresh-google-summary">Обновить</button></div><input id="google-summary-search" class="sheet-feed-search" placeholder="Поиск по ШК, артикулу или размеру"><div id="google-summary-body"><div class="sheet-feed-state">Загрузка…</div></div></div><div class="panel-title transfer-list-title">Заявки B-FBS</div><div id="transfers-list" class="operation-list"></div></section>`;
+    return `<section class="wms-page"><div class="wms-page-head"><div><h2>Заявки на перемещение</h2><p>Списание происходит только после «Отправить» и только из выбранной коробки-источника.</p></div>${can('transfers_manage')?'<button class="btn primary" id="add-transfer">+ Новая заявка</button>':''}</div><div class="wms-subsection sheet-feed"><div class="panel-head"><div><div class="panel-title">Сводная · Google Sheets</div><div class="sheet-feed-note">Трансляция A / B / E / J: ШК, артикул, размер и «Итого упаковано».</div></div><button type="button" class="btn" id="refresh-google-summary">Обновить</button></div><input id="google-summary-search" class="sheet-feed-search" placeholder="Поиск по ШК, артикулу или размеру"><div id="google-summary-body"><div class="sheet-feed-state">Загрузка…</div></div></div><div class="panel-title transfer-list-title">Заявки B-FBS</div><div id="transfers-list" class="operation-list"></div></section>`;
   }
   function renderTransfers(){
     const host=document.getElementById('transfers-list');if(!host)return;
-    host.innerHTML=wms.transfers.length?wms.transfers.map(transfer=>`<article class="operation-card"><div><span class="status-pill ${transfer.status==='received'?'ok':''}">${esc(statusLabel(transfer.status))}</span><h3>${esc(transfer.article)} · ${esc(transfer.size)}</h3><p><b>Источник:</b> ${esc(warehouseName(transfer.fromWarehouseId))} · ${esc(transfer.boxId||'—')} → <b>Назначение:</b> ${esc(warehouseName(transfer.toWarehouseId))}</p><small>${esc(transfer.barcode)} · ${Number(transfer.quantity)} ед. · ${dateText(transfer.createdAt)}${transfer.source==='google-sheet'?' · из «Сводной»':''}</small></div><div class="operation-actions">${transfer.status==='new'?'<button class="btn" data-transfer-send="'+esc(transfer.id)+'">Отправить и списать</button>':''}${transfer.status==='in_transit'?'<button class="btn primary" data-transfer-receive="'+esc(transfer.id)+'">Принять</button>':''}${!['received','cancelled'].includes(transfer.status)?'<button class="btn danger-outline" data-transfer-cancel="'+esc(transfer.id)+'">Отменить</button>':''}</div></article>`).join(''):empty('Заявок на перемещение пока нет.');
+    host.innerHTML=wms.transfers.length?wms.transfers.map(transfer=>`<article class="operation-card"><div><span class="status-pill ${transfer.status==='received'?'ok':''}">${esc(statusLabel(transfer.status))}</span><h3>${esc(transfer.article)} · ${esc(transfer.size)}</h3><p><b>Источник:</b> ${esc(warehouseName(transfer.fromWarehouseId))} · ${esc(transfer.boxId||'—')} → <b>Назначение:</b> ${esc(warehouseName(transfer.toWarehouseId))}</p><small>${esc(transfer.barcode)} · ${Number(transfer.quantity)} ед. · ${dateText(transfer.createdAt)}${transfer.source==='google-sheet'?' · из «Сводной»':''}</small></div><div class="operation-actions">${can('transfers_manage')&&transfer.status==='new'?'<button class="btn" data-transfer-send="'+esc(transfer.id)+'">Отправить и списать</button>':''}${can('transfers_manage')&&transfer.status==='in_transit'?'<button class="btn primary" data-transfer-receive="'+esc(transfer.id)+'">Принять</button>':''}${can('transfers_manage')&&!['received','cancelled'].includes(transfer.status)?'<button class="btn danger-outline" data-transfer-cancel="'+esc(transfer.id)+'">Отменить</button>':''}</div></article>`).join(''):empty('Заявок на перемещение пока нет.');
     host.querySelectorAll('[data-transfer-send]').forEach(button=>button.onclick=()=>sendTransfer(button.dataset.transferSend));
     host.querySelectorAll('[data-transfer-receive]').forEach(button=>button.onclick=()=>receiveTransfer(button.dataset.transferReceive));
     host.querySelectorAll('[data-transfer-cancel]').forEach(button=>button.onclick=()=>cancelTransfer(button.dataset.transferCancel));
@@ -950,6 +1108,7 @@
     document.getElementById('google-summary-search')?.addEventListener('input',renderGoogleSummary);
   }
   function openTransferForm(prefill={}){
+    if(!requireClientPermission('transfers_manage','У вас нет доступа к управлению перемещениями.'))return;
     const sourceBoxes=wms.boxes.filter(box=>boxQuantity(box)>0&&(!prefill.barcode||(box.items||[]).some(item=>item.barcode===prefill.barcode&&Number(item.quantity)>0)));
     if(!sourceBoxes.length){toast(prefill.barcode?'В B-FBS нет коробки с остатком этого ШК. Сначала разместите товар на складе.':'Нет коробок с остатками для перемещения.','warning');return}
     const source=sourceBoxes[0],target=warehouses().find(item=>item.id!==source.warehouseId);
@@ -963,24 +1122,24 @@
       form.onsubmit=event=>{event.preventDefault();const data=Object.fromEntries(new FormData(form)),box=wms.boxes.find(item=>item.id===data.boxId),item=box?.items.find(row=>row.barcode===data.barcode),quantity=Number(data.quantity);if(!item||quantity<1||quantity>Number(item.quantity)){form.querySelector('.form-error').innerHTML='<div class="error">Количество превышает остаток в выбранной коробке.</div>';return}const targetZones=warehouses().find(warehouse=>warehouse.id===data.toWarehouseId)?.zones||[];if(!targetZones.length){form.querySelector('.form-error').innerHTML='<div class="error">На складе назначения нет зон хранения.</div>';return}wms.transfers.unshift({id:uid('TR'),status:'new',boxId:box.id,fromWarehouseId:box.warehouseId,toWarehouseId:data.toWarehouseId,toZoneId:targetZones[0].id,article:item.article,barcode:item.barcode,size:item.size,quantity,source:prefill.source||'manual',createdAt:new Date().toISOString(),createdBy:currentUser?.name||''});saveWms(`Создана заявка на перемещение ${item.article}`);close();renderTransfers()};
     });
   }
-  function sendTransfer(id){const transfer=wms.transfers.find(item=>item.id===id),box=wms.boxes.find(item=>item.id===transfer?.boxId),stock=box?.items.find(item=>item.barcode===transfer?.barcode);if(!transfer||transfer.status!=='new'||!stock)return;if(Number(stock.quantity)<transfer.quantity){toast('Остатка в исходной коробке уже недостаточно.','warning');return}stock.quantity-=transfer.quantity;box.updatedAt=new Date().toISOString();transfer.status='in_transit';transfer.sentAt=new Date().toISOString();recordMovement('transfer_out',-transfer.quantity,box,stock,transfer.id);saveWms(`Отправлено перемещение ${transfer.id}: списано ${transfer.quantity} ед. из ${box.id}`);renderTransfers()}
-  function receiveTransfer(id){const transfer=wms.transfers.find(item=>item.id===id);if(!transfer||transfer.status!=='in_transit')return;let box=wms.boxes.find(item=>item.warehouseId===transfer.toWarehouseId&&item.zoneId===transfer.toZoneId&&!item.locked);if(!box){box={id:nextBoxId(),qrCode:'',warehouseId:transfer.toWarehouseId,zoneId:transfer.toZoneId,items:[],locked:false,createdAt:new Date().toISOString()};box.qrCode=`BFBS:BOX:${box.id}`;wms.boxes.push(box)}const item=upsertBoxItem(box,transfer,transfer.quantity);transfer.status='received';transfer.receivedAt=new Date().toISOString();transfer.receivedBoxId=box.id;recordMovement('transfer_in',transfer.quantity,box,item,transfer.id);saveWms(`Получено перемещение ${transfer.id}`);renderTransfers()}
-  function cancelTransfer(id){const transfer=wms.transfers.find(item=>item.id===id);if(!transfer||['received','cancelled'].includes(transfer.status))return;if(transfer.status==='in_transit'){const box=wms.boxes.find(item=>item.id===transfer.boxId);if(box){const stock=upsertBoxItem(box,transfer,transfer.quantity);recordMovement('transfer_return',transfer.quantity,box,stock,transfer.id)}}transfer.status='cancelled';transfer.cancelledAt=new Date().toISOString();saveWms(`Отменено перемещение ${transfer.id}`);renderTransfers()}
+  function sendTransfer(id){if(!requireClientPermission('transfers_manage','У вас нет доступа к управлению перемещениями.'))return;const transfer=wms.transfers.find(item=>item.id===id),box=wms.boxes.find(item=>item.id===transfer?.boxId),stock=box?.items.find(item=>item.barcode===transfer?.barcode);if(!transfer||transfer.status!=='new'||!stock)return;if(Number(stock.quantity)<transfer.quantity){toast('Остатка в исходной коробке уже недостаточно.','warning');return}stock.quantity-=transfer.quantity;box.updatedAt=new Date().toISOString();transfer.status='in_transit';transfer.sentAt=new Date().toISOString();recordMovement('transfer_out',-transfer.quantity,box,stock,transfer.id);saveWms(`Отправлено перемещение ${transfer.id}: списано ${transfer.quantity} ед. из ${box.id}`);renderTransfers()}
+  function receiveTransfer(id){if(!requireClientPermission('transfers_manage','У вас нет доступа к управлению перемещениями.'))return;const transfer=wms.transfers.find(item=>item.id===id);if(!transfer||transfer.status!=='in_transit')return;let box=wms.boxes.find(item=>item.warehouseId===transfer.toWarehouseId&&item.zoneId===transfer.toZoneId&&!item.locked);if(!box){box={id:nextBoxId(),qrCode:'',warehouseId:transfer.toWarehouseId,zoneId:transfer.toZoneId,items:[],locked:false,createdAt:new Date().toISOString()};box.qrCode=`BFBS:BOX:${box.id}`;wms.boxes.push(box)}const item=upsertBoxItem(box,transfer,transfer.quantity);transfer.status='received';transfer.receivedAt=new Date().toISOString();transfer.receivedBoxId=box.id;recordMovement('transfer_in',transfer.quantity,box,item,transfer.id);saveWms(`Получено перемещение ${transfer.id}`);renderTransfers()}
+  function cancelTransfer(id){if(!requireClientPermission('transfers_manage','У вас нет доступа к управлению перемещениями.'))return;const transfer=wms.transfers.find(item=>item.id===id);if(!transfer||['received','cancelled'].includes(transfer.status))return;if(transfer.status==='in_transit'){const box=wms.boxes.find(item=>item.id===transfer.boxId);if(box){const stock=upsertBoxItem(box,transfer,transfer.quantity);recordMovement('transfer_return',transfer.quantity,box,stock,transfer.id)}}transfer.status='cancelled';transfer.cancelledAt=new Date().toISOString();saveWms(`Отменено перемещение ${transfer.id}`);renderTransfers()}
 
-  function revisionView(){return `<section class="wms-page"><div class="wms-page-head"><div><h2>Ревизия</h2><p>Приоритет рассчитывается по низкому остатку, давности и движениям.</p></div>${['admin','manager','auditor'].includes(currentUser?.role)?'<button class="btn primary" id="generate-revisions">Сформировать задания</button>':''}</div><div id="revisions-list" class="operation-list"></div></section>`}
+  function revisionView(){return `<section class="wms-page"><div class="wms-page-head"><div><h2>Ревизия</h2><p>Приоритет рассчитывается по низкому остатку, давности и движениям.</p></div>${can('revisions_manage')?'<button class="btn primary" id="generate-revisions">Сформировать задания</button>':''}</div><div id="revisions-list" class="operation-list"></div></section>`}
   function revisionScore(box){const age=Math.min(30,Math.floor((Date.now()-new Date(box.updatedAt||box.createdAt||0).getTime())/86400000)),moves=wms.movements.filter(item=>item.boxId===box.id).length,low=boxQuantity(box)<=3?40:0;return low+Math.min(30,moves*3)+Math.min(30,Math.max(0,age))}
-  function renderRevisions(){const host=document.getElementById('revisions-list');if(!host)return;host.innerHTML=wms.revisions.length?wms.revisions.map(item=>`<article class="operation-card"><div><span class="priority ${item.priority==='Высокий'?'high':''}">${esc(item.priority)} приоритет</span><h3>${esc(item.boxId)}</h3><p>${esc(warehouseName(item.warehouseId))} · ${esc(findZone(item.warehouseId,item.zoneId)?.name||item.zoneId)}</p><small>${statusLabel(item.status)} · создано ${dateText(item.createdAt)}${item.completedAt?' · проверено '+dateText(item.completedAt):''}</small></div><div class="operation-actions">${item.status!=='done'?'<button class="btn primary" data-revision-check="'+esc(item.id)+'">Проверить</button>':''}</div></article>`).join(''):empty('Активных заданий на ревизию нет.');host.querySelectorAll('[data-revision-check]').forEach(button=>button.onclick=()=>openRevision(button.dataset.revisionCheck))}
+  function renderRevisions(){const host=document.getElementById('revisions-list');if(!host)return;host.innerHTML=wms.revisions.length?wms.revisions.map(item=>`<article class="operation-card"><div><span class="priority ${item.priority==='Высокий'?'high':''}">${esc(item.priority)} приоритет</span><h3>${esc(item.boxId)}</h3><p>${esc(warehouseName(item.warehouseId))} · ${esc(findZone(item.warehouseId,item.zoneId)?.name||item.zoneId)}</p><small>${statusLabel(item.status)} · создано ${dateText(item.createdAt)}${item.completedAt?' · проверено '+dateText(item.completedAt):''}</small></div><div class="operation-actions">${can('revisions_manage')&&item.status!=='done'?'<button class="btn primary" data-revision-check="'+esc(item.id)+'">Проверить</button>':''}</div></article>`).join(''):empty('Активных заданий на ревизию нет.');host.querySelectorAll('[data-revision-check]').forEach(button=>button.onclick=()=>openRevision(button.dataset.revisionCheck))}
   function bindRevisions(){if(document.getElementById('revisions-list'))renderRevisions();document.getElementById('generate-revisions')?.addEventListener('click',()=>{let added=0;wms.boxes.slice().sort((a,b)=>revisionScore(b)-revisionScore(a)).slice(0,20).forEach(box=>{if(wms.revisions.some(item=>item.boxId===box.id&&item.status!=='done'))return;const score=revisionScore(box);wms.revisions.push({id:uid('REV'),boxId:box.id,warehouseId:box.warehouseId,zoneId:box.zoneId,status:'queued',score,priority:score>=50?'Высокий':score>=25?'Средний':'Обычный',createdAt:new Date().toISOString()});added++});saveWms(`Сформировано заданий ревизии: ${added}`);toast(`Создано заданий: ${added}`,'success');renderRevisions()})}
   function openRevision(id){const revision=wms.revisions.find(item=>item.id===id),box=wms.boxes.find(item=>item.id===revision?.boxId);if(!revision||!box)return;openModal(`Ревизия ${box.id}`,`<form class="wms-form" id="revision-form"><label>QR коробки<input name="qrCode" autocomplete="off" placeholder="${esc(box.qrCode)}" required></label><p>После подтверждения коробки укажите фактическое количество.</p>${(box.items||[]).map((item,index)=>`<label>${esc(item.article)} · ${esc(item.size)} · ${esc(item.barcode)}<input name="qty-${index}" type="number" min="0" value="${Number(item.quantity||0)}"></label>`).join('')||empty('Коробка пуста')}<label>Комментарий<textarea name="note" rows="3"></textarea></label><div class="form-error"></div><div class="modal-actions"><button type="button" class="btn" data-close>Отмена</button><button class="btn primary">Завершить проверку</button></div></form>`,(modal,close)=>{modal.querySelector('form').onsubmit=event=>{event.preventDefault();const form=event.currentTarget;if(![box.id,box.qrCode].includes(form.elements.qrCode.value.trim())){form.querySelector('.form-error').innerHTML='<div class="error">QR-код не соответствует коробке задания.</div>';return}(box.items||[]).forEach((item,index)=>{const actual=Math.max(0,Number(form.elements[`qty-${index}`].value)||0),difference=actual-Number(item.quantity||0);if(difference)recordMovement('revision_adjustment',difference,box,item,form.elements.note.value);item.quantity=actual});box.updatedAt=new Date().toISOString();revision.status='done';revision.completedAt=new Date().toISOString();revision.completedBy=currentUser?.name||'';revision.note=form.elements.note.value;saveWms(`Завершена ревизия ${box.id}`);close();renderRevisions()}})}
 
   function tasksView(){
-    const canCreate=['admin','manager'].includes(currentUser?.role);
+    const canCreate=can('tasks_manage'),canPick=can('tasks_pick');
     const active=wms.tasks.filter(task=>!['ready','done','cancelled'].includes(task.status)).length;
     return `<section class="wms-page">
       <div class="wms-page-head">
         <div><h2>Сборочные задания</h2><p>Сначала QR коробки, затем штрихкод товара. Для сборщиков доступен отдельный Scanner Mode.</p></div>
         <div class="wms-actions">
-          <button class="btn scanner-launch" id="scanner-mode" ${active?'':'disabled'}>Scanner Mode${active?` · ${active}`:''}</button>
+          ${canPick?`<button class="btn scanner-launch" id="scanner-mode" ${active?'':'disabled'}>Scanner Mode${active?` · ${active}`:''}</button>`:''}
           ${canCreate?'<button class="btn primary" id="add-task">+ Создать задание</button>':''}
         </div>
       </div>
@@ -1001,8 +1160,8 @@
           <div class="task-progress-mini"><span style="width:${percent}%"></span></div>
         </div>
         <div class="operation-actions">
-          ${!['ready','done','cancelled'].includes(task.status)?'<button class="btn primary" data-task-work="'+esc(task.id)+'">Собирать</button>':''}
-          ${task.status==='ready'?'<button class="btn primary" data-task-done="'+esc(task.id)+'">Завершить</button>':''}
+          ${can('tasks_pick')&&!['ready','done','cancelled'].includes(task.status)?'<button class="btn primary" data-task-work="'+esc(task.id)+'">Собирать</button>':''}
+          ${can('tasks_manage')&&task.status==='ready'?'<button class="btn primary" data-task-done="'+esc(task.id)+'">Завершить</button>':''}
         </div>
       </article>`;
     }).join(''):empty('Сборочных заданий пока нет.');
@@ -1019,6 +1178,7 @@
     document.getElementById('scanner-mode')?.addEventListener('click',openScannerTaskChoice);
   }
   function openScannerTaskChoice(){
+    if(!requireClientPermission('tasks_pick','Scanner Mode для вашей учетной записи отключен.'))return;
     const active=wms.tasks.filter(task=>!['ready','done','cancelled'].includes(task.status));
     if(!active.length){toast('Нет заданий, доступных для сборки.','info');return}
     if(active.length===1){openTaskScanner(active[0].id);return}
@@ -1033,7 +1193,7 @@
       modal.querySelectorAll('[data-scanner-task]').forEach(button=>button.onclick=()=>{const id=button.dataset.scannerTask;close();openTaskScanner(id)});
     });
   }
-  function openTaskForm(){if(!wms.nomenclature.length){toast('Сначала загрузите номенклатуру.','warning');return}openModal('Новое сборочное задание',`<form class="wms-form" id="task-form"><label>Товар<select name="barcode">${skuOptions()}</select></label><label>Количество<input name="quantity" type="number" min="1" value="1" required></label><label>Номер заказа / поставки<input name="number" value="${esc(`FBS-${Date.now().toString().slice(-6)}`)}"></label><div class="form-error"></div><div class="modal-actions"><button type="button" class="btn" data-close>Отмена</button><button class="btn primary">Создать</button></div></form>`,(modal,close)=>{modal.querySelector('form').onsubmit=event=>{event.preventDefault();const data=Object.fromEntries(new FormData(event.currentTarget)),sku=itemByBarcode(data.barcode),quantity=Number(data.quantity),stock=wms.boxes.reduce((sum,box)=>sum+Number(box.items.find(item=>item.barcode===data.barcode)?.quantity||0),0);if(!sku||quantity<1||quantity>stock){event.currentTarget.querySelector('.form-error').innerHTML=`<div class="error">Доступный остаток: ${stock} ед.</div>`;return}wms.tasks.unshift({id:uid('TASK'),number:data.number.trim(),status:'queued',lines:[{article:sku.article,barcode:sku.barcode,size:sku.size,required:quantity,picked:0}],createdAt:new Date().toISOString(),createdBy:currentUser?.name||''});saveWms(`Создано сборочное задание ${data.number}`);close();renderTasks()}})}
+  function openTaskForm(){if(!requireClientPermission('tasks_manage','У вас нет доступа к созданию сборочных заданий.'))return;if(!wms.nomenclature.length){toast('Сначала загрузите номенклатуру.','warning');return}openModal('Новое сборочное задание',`<form class="wms-form" id="task-form"><label>Товар<select name="barcode">${skuOptions()}</select></label><label>Количество<input name="quantity" type="number" min="1" value="1" required></label><label>Номер заказа / поставки<input name="number" value="${esc(`FBS-${Date.now().toString().slice(-6)}`)}"></label><div class="form-error"></div><div class="modal-actions"><button type="button" class="btn" data-close>Отмена</button><button class="btn primary">Создать</button></div></form>`,(modal,close)=>{modal.querySelector('form').onsubmit=event=>{event.preventDefault();const data=Object.fromEntries(new FormData(event.currentTarget)),sku=itemByBarcode(data.barcode),quantity=Number(data.quantity),stock=wms.boxes.reduce((sum,box)=>sum+Number(box.items.find(item=>item.barcode===data.barcode)?.quantity||0),0);if(!sku||quantity<1||quantity>stock){event.currentTarget.querySelector('.form-error').innerHTML=`<div class="error">Доступный остаток: ${stock} ед.</div>`;return}wms.tasks.unshift({id:uid('TASK'),number:data.number.trim(),status:'queued',lines:[{article:sku.article,barcode:sku.barcode,size:sku.size,required:quantity,picked:0}],createdAt:new Date().toISOString(),createdBy:currentUser?.name||''});saveWms(`Создано сборочное задание ${data.number}`);close();renderTasks()}})}
   function suggestedBoxes(barcode){return wms.boxes.filter(box=>!box.locked&&Number(box.items.find(item=>item.barcode===barcode)?.quantity||0)>0).sort((a,b)=>Number(a.items.find(item=>item.barcode===barcode)?.quantity||0)-Number(b.items.find(item=>item.barcode===barcode)?.quantity||0))}
   function scannerBeep(kind='ok'){
     try{
@@ -1048,6 +1208,7 @@
     }catch(_){}
   }
   function openTaskScanner(id){
+    if(!requireClientPermission('tasks_pick','У вас нет доступа к сборке заданий.'))return;
     const task=wms.tasks.find(item=>item.id===id),line=task?.lines?.[0];
     if(!task||!line)return;
     if(['ready','done','cancelled'].includes(task.status)){toast('Это задание уже недоступно для сборки.','warning');return}
@@ -1207,6 +1368,7 @@
 
   function nextBoxId(){let max=0;wms.boxes.forEach(box=>{const match=String(box.id).match(/BOX-(\d+)/);if(match)max=Math.max(max,Number(match[1]))});return `BOX-${String(max+1).padStart(4,'0')}`}
   function openBoxForm(box,defaultZoneId){
+    if(!requireClientPermission('inventory_manage','У вас нет доступа к изменению коробок и остатков.'))return;
     if(!wms.nomenclature.length){toast('Сначала добавьте или импортируйте номенклатуру.','warning');return}
     const warehouseId=box?.warehouseId||activeWarehouseId(),zoneId=box?.zoneId||defaultZoneId||((warehouseId===activeWarehouseId()?zones:warehouses().find(item=>item.id===warehouseId)?.zones)||[])[0]?.id;
     if(!zoneId){toast('Сначала создайте зону хранения.','warning');return}
@@ -1447,6 +1609,7 @@
     });
   }
   function deleteBox(box){
+    if(!requireClientPermission('inventory_manage','У вас нет доступа к удалению коробок.'))return false;
     if(!box)return false;
     const quantity=boxQuantity(box);
     const question=quantity?`Удалить ${box.id} и списать из учета ${quantity} ед.?`:`Удалить ${box.id}?`;
@@ -1473,7 +1636,7 @@
     window.addEventListener('afterprint',cleanup,{once:true});
     setTimeout(()=>window.print(),120);
   }
-  function openBox(id){const box=wms.boxes.find(item=>item.id===id);if(!box)return;openModal(box.id,`<div class="box-detail"><div id="box-qr" class="qr-host"></div><div><span class="status-pill ${box.locked?'muted':'ok'}">${box.locked?'Заблокирована':'Активна'}</span><h3>${esc(warehouseName(box.warehouseId))} · ${esc(findZone(box.warehouseId,box.zoneId)?.name||box.zoneId)}</h3><p>QR: ${esc(box.qrCode)}</p></div></div><div class="wms-table-wrap"><table class="wms-table"><thead><tr><th>Артикул</th><th>ШК</th><th>Размер</th><th>Остаток</th></tr></thead><tbody>${(box.items||[]).map(item=>`<tr><td>${esc(item.article)}</td><td>${esc(item.barcode)}</td><td>${esc(item.size)}</td><td><b>${Number(item.quantity||0)}</b></td></tr>`).join('')||`<tr><td colspan="4">Коробка пуста</td></tr>`}</tbody></table></div><div class="modal-actions"><button class="btn" id="box-print">Печать QR</button>${['admin','manager'].includes(currentUser?.role)?'<button class="btn" id="box-edit">Изменить / пополнить</button><button class="btn danger-outline" id="box-delete">Удалить</button>':''}<button class="btn" data-close>Закрыть</button></div>`,(modal,close)=>{const host=modal.querySelector('#box-qr');if(window.QRCode)new QRCode(host,{text:box.qrCode,width:160,height:160,correctLevel:QRCode.CorrectLevel.M});modal.querySelector('#box-print').onclick=()=>printBoxLabel(box);modal.querySelector('#box-edit')?.addEventListener('click',()=>{close();openBoxForm(box)});modal.querySelector('#box-delete')?.addEventListener('click',()=>{if(deleteBox(box)){close();render()}})})}
+  function openBox(id){const box=wms.boxes.find(item=>item.id===id);if(!box)return;openModal(box.id,`<div class="box-detail"><div id="box-qr" class="qr-host"></div><div><span class="status-pill ${box.locked?'muted':'ok'}">${box.locked?'Заблокирована':'Активна'}</span><h3>${esc(warehouseName(box.warehouseId))} · ${esc(findZone(box.warehouseId,box.zoneId)?.name||box.zoneId)}</h3><p>QR: ${esc(box.qrCode)}</p></div></div><div class="wms-table-wrap"><table class="wms-table"><thead><tr><th>Артикул</th><th>ШК</th><th>Размер</th><th>Остаток</th></tr></thead><tbody>${(box.items||[]).map(item=>`<tr><td>${esc(item.article)}</td><td>${esc(item.barcode)}</td><td>${esc(item.size)}</td><td><b>${Number(item.quantity||0)}</b></td></tr>`).join('')||`<tr><td colspan="4">Коробка пуста</td></tr>`}</tbody></table></div><div class="modal-actions"><button class="btn" id="box-print">Печать QR</button>${can('inventory_manage')?'<button class="btn" id="box-edit">Изменить / пополнить</button><button class="btn danger-outline" id="box-delete">Удалить</button>':''}<button class="btn" data-close>Закрыть</button></div>`,(modal,close)=>{const host=modal.querySelector('#box-qr');if(window.QRCode)new QRCode(host,{text:box.qrCode,width:160,height:160,correctLevel:QRCode.CorrectLevel.M});modal.querySelector('#box-print').onclick=()=>printBoxLabel(box);modal.querySelector('#box-edit')?.addEventListener('click',()=>{close();openBoxForm(box)});modal.querySelector('#box-delete')?.addEventListener('click',()=>{if(deleteBox(box)){close();render()}})})}
   function downloadBulkReplenishmentTemplate(){
     if(!window.XLSX){toast('Модуль Excel не загружен.','warning');return}
     const sheet=XLSX.utils.aoa_to_sheet([['Баркод','Количество']]);
@@ -1516,6 +1679,7 @@
     return candidates[0]||null;
   }
   function openBulkReplenishment(){
+    if(!requireClientPermission('inventory_manage','Массовое пополнение для вашей учетной записи отключено.'))return;
     const warehouseId=inventoryWarehouseId();
     if(!warehouseId){toast('Сначала выберите рабочий склад.','warning');return}
     if(!wms.nomenclature.length){toast('Сначала загрузите номенклатуру.','warning');return}
