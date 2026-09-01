@@ -83,6 +83,7 @@
     const item=warehouses.find(w=>w.id===id);if(!item)return;
     syncWarehouse();
     activeWarehouseId=id;
+    localStorage.setItem('b-fbs-active-warehouse',id);
     draft=clone(item.draft||blankDraft(item.name));
     published=clone(item.published||null);
     zones=clone(item.zones||[]);
@@ -104,6 +105,7 @@
     const initialView=blankView();
     const item={id,name:d.name,draft:d,published:null,zones:[],versions:[],view:initialView};
     warehouses.push(item);activeWarehouseId=id;
+    localStorage.setItem('b-fbs-active-warehouse',id);
     draft=clone(d);published=null;zones=[];versions=[];workspaceMode='design';tool='select';selected=null;view=clone(initialView);
     window.__bfbsWorkspaceNeedsFit=false;
     localStorage.setItem(WAREHOUSE_KEY,JSON.stringify(warehouses));
@@ -116,6 +118,7 @@
     warehouses=warehouses.filter(w=>w.id!==item.id);
     if(warehouses.length){
       activeWarehouseId=warehouses[0].id;
+      localStorage.setItem('b-fbs-active-warehouse',activeWarehouseId);
       const next=warehouses[0];draft=clone(next.draft||blankDraft(next.name));published=clone(next.published||null);zones=clone(next.zones||[]);versions=clone(next.versions||[]);workspaceMode=published?'management':'design';
       const savedView=normalizeView(next.view);view=savedView||blankView();window.__bfbsWorkspaceNeedsFit=!savedView;
     }else{
