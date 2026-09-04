@@ -39,3 +39,4 @@ jobs:
           pnpm run test:smoke
           pnpm run test:shared
           pnpm run test:permissions
+          pnpm run test:wb
