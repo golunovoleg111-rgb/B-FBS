@@ -1,5 +1,5 @@
 const AUTH_KEY='b-fbs-auth',ADMIN_LOGIN='Admin1',ADMIN_PASSWORD='Admin123';
-const TABS=[['dashboard','Главный экран'],['workspace','Рабочее пространство'],['inventory','Учет склада'],['transfer','Заявка на перемещение'],['revision','Ревизия'],['account','Личный кабинет'],['tasks','Сборочное задание']];
+const TABS=[['dashboard','Главный экран'],['workspace','Рабочее пространство'],['inventory','Учет склада'],['transfer','Пополнение FBS'],['revision','Ревизия'],['account','Личный кабинет'],['tasks','Заказы и сборка']];
 const WORLD={w:5000,h:3000},VIEW={w:1000,h:500},ZOOM={min:.2,max:4,step:.1},SCALE=.05;
 const OBJECT_TYPES={'Вход':{cls:'entrance',icon:'↔'},'Рабочая зона сборщиков':{cls:'work',icon:'▦'},'Место для коробок':{cls:'boxes',icon:'▤'},'Место для мусора':{cls:'trash',icon:'♻'},'Окно':{cls:'window',icon:'▥'},'Ворота':{cls:'gate',icon:'⇆'},'Перегородка':{cls:'partition',icon:'│'}};
 const root=document.getElementById('root');

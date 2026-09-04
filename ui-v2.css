@@ -622,7 +622,7 @@ select.ui-native-select{
 }
 .ui-select-trigger.is-open .ui-select-chevron{transform:rotate(225deg) translate(-1px,-1px)}
 .ui-select-menu{
-  position:fixed;z-index:20050;max-height:300px;overflow:auto;
+  position:fixed;z-index:20050;max-height:360px;overflow:hidden;
   padding:5px;background:rgba(255,255,255,.985);
   border:1px solid #dfe3ec;border-radius:12px;
   box-shadow:0 18px 50px rgba(13,18,32,.18);
@@ -630,6 +630,16 @@ select.ui-native-select{
   transform-origin:top;transition:opacity .15s ease,transform .18s var(--ui-ease);
 }
 .ui-select-menu.is-visible{opacity:1;transform:none}
+.ui-select-search{
+  position:sticky;top:0;z-index:2;display:flex;align-items:center;gap:7px;
+  margin:1px 1px 5px;padding:0 9px;min-height:39px;border:1px solid var(--ui-line-strong);
+  border-radius:9px;background:#fff;color:var(--ui-faint);
+}
+.ui-select-search:focus-within{border-color:#9aa5f1;box-shadow:0 0 0 3px rgba(89,104,232,.10)}
+.ui-select-search input{width:100%;min-width:0;border:0!important;background:transparent!important;box-shadow:none!important;color:var(--ui-ink);font-size:10px}
+.ui-select-search input::-webkit-search-cancel-button{cursor:pointer}
+.ui-select-options{max-height:300px;overflow:auto}
+.ui-select-empty{padding:18px 10px;text-align:center;color:var(--ui-faint);font-size:10px}
 .ui-select-option{
   width:100%;min-height:36px;border:0;border-radius:8px;
   background:transparent;color:#394358;padding:7px 10px;
@@ -637,6 +647,7 @@ select.ui-native-select{
   font-size:10px;font-weight:570;
   transition:background var(--ui-fast),color var(--ui-fast);
 }
+.ui-select-option[hidden]{display:none}
 .ui-select-option:hover:not(:disabled){background:#f2f4ff;color:#3545b5}
 .ui-select-option.selected{background:var(--ui-accent-soft);color:var(--ui-accent-strong);font-weight:710}
 .ui-select-option.selected:after{content:"✓";margin-left:auto;font-size:10px}
@@ -713,6 +724,24 @@ select.ui-native-select{
   padding:10px 11px;border-radius:10px;border:1px solid #dfe3fb;
   background:#f4f5ff;color:#5662a4;font-size:9px;line-height:1.55;
 }
+.replenishment-flow{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:7px;margin:-4px 0 18px}
+.replenishment-flow span{position:relative;padding:10px 12px;border:1px solid var(--ui-line);border-radius:10px;background:#fff;color:var(--ui-muted);font-size:9px;font-weight:700}
+.replenishment-flow span.active{border-color:#cbd1ff;background:var(--ui-accent-soft);color:var(--ui-accent-strong)}
+@media(max-width:760px){.replenishment-flow{grid-template-columns:1fr 1fr}}
+.wb-orders-panel{display:grid;gap:12px;margin-bottom:18px}
+.wb-orders-count{display:inline-grid;place-items:center;min-width:22px;height:19px;margin-left:5px;padding:0 6px;border-radius:99px;background:var(--ui-accent-soft);color:var(--ui-accent-strong);font-size:9px}
+.wb-orders-toolbar{display:grid;grid-template-columns:minmax(220px,1fr) auto;gap:9px}
+.wb-orders-table{max-height:430px}
+.wb-orders-table td:first-child,.wb-orders-table th:first-child{width:34px;text-align:center}
+.wb-orders-table td small{display:block;margin-top:4px;color:var(--ui-faint);font-size:8px;line-height:1.4}
+.wb-orders-table tr.is-muted{opacity:.58}
+.wb-orders-table input[type="checkbox"]{width:15px;height:15px;accent-color:var(--ui-accent);cursor:pointer}
+.stock-ok{color:var(--ui-success)}.stock-empty{color:var(--ui-danger)}
+.status-pill.warning{background:var(--ui-warning-soft);color:var(--ui-warning)}
+.wb-sync-note{text-align:right;color:var(--ui-faint);font-size:8px;margin-top:7px}
+.task-list-title{margin:6px 0 10px}
+.legacy-operation{border-style:dashed!important;background:#fffdf7!important}
+@media(max-width:700px){.wb-orders-toolbar{grid-template-columns:1fr}.wb-orders-toolbar .btn{width:100%}}
 
 /* Dedicated thermal QR label: one clean 58×60 mm page */
 .qr-print-sheet{display:none}
@@ -1193,6 +1222,7 @@ body.scanner-mode-active{overflow:hidden!important}
 .scanner-counter{display:flex!important;align-items:baseline!important;gap:5px!important;white-space:nowrap}
 .scanner-counter strong{font-size:34px;line-height:1;color:#4657d9;font-variant-numeric:tabular-nums}
 .scanner-counter span{font-size:15px!important;letter-spacing:0!important;color:#8d96a7!important}
+.scanner-counter i{font:inherit;font-style:normal}
 .scanner-progress{height:8px;border-radius:999px;background:#e5e9f0;overflow:hidden}
 .scanner-progress span{display:block;height:100%;width:0;border-radius:inherit;background:#4657d9;transition:width .22s ease}
 .scanner-state{

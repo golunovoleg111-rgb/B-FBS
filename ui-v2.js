@@ -58,6 +58,18 @@
     menu.className='ui-select-menu';
     menu.setAttribute('role','listbox');
 
+    const optionsHost=document.createElement('div');
+    optionsHost.className='ui-select-options';
+    const searchable=select.dataset.searchable!=='false'&&select.options.length>=6;
+    let search=null;
+    if(searchable){
+      const searchWrap=document.createElement('label');
+      searchWrap.className='ui-select-search';
+      searchWrap.innerHTML='<span aria-hidden="true">⌕</span><input type="search" autocomplete="off" placeholder="Поиск…" aria-label="Поиск по списку">';
+      search=searchWrap.querySelector('input');
+      menu.appendChild(searchWrap);
+    }
+
     [...select.options].forEach(option=>{
       const item=document.createElement('button');
       item.type='button';
@@ -76,13 +88,42 @@
         syncSelect(select);
         closeSelect();
       });
-      menu.appendChild(item);
+      item.dataset.search=String(option.textContent||'').toLocaleLowerCase('ru-RU');
+      optionsHost.appendChild(item);
+    });
+    const empty=document.createElement('div');
+    empty.className='ui-select-empty';
+    empty.textContent='Ничего не найдено';
+    empty.hidden=true;
+    optionsHost.appendChild(empty);
+    menu.appendChild(optionsHost);
+
+    const visibleItems=()=>[...optionsHost.querySelectorAll('.ui-select-option:not([hidden]):not(:disabled)')];
+    const focusItem=delta=>{
+      const items=visibleItems();if(!items.length)return;
+      const current=items.indexOf(document.activeElement);
+      items[(current+delta+items.length)%items.length].focus();
+    };
+    menu.addEventListener('keydown',event=>{
+      if(event.key==='Escape'){event.preventDefault();closeSelect();trigger.focus();return}
+      if(event.key==='ArrowDown'){event.preventDefault();focusItem(1);return}
+      if(event.key==='ArrowUp'){event.preventDefault();focusItem(-1);return}
+      if(event.key==='Home'&&document.activeElement!==search){event.preventDefault();visibleItems()[0]?.focus();return}
+      if(event.key==='End'&&document.activeElement!==search){event.preventDefault();visibleItems().at(-1)?.focus()}
+    });
+    search?.addEventListener('input',()=>{
+      const query=search.value.trim().toLocaleLowerCase('ru-RU');let count=0;
+      optionsHost.querySelectorAll('.ui-select-option').forEach(item=>{
+        const match=!query||item.dataset.search.includes(query);
+        item.hidden=!match;if(match)count++;
+      });
+      empty.hidden=count!==0;
     });
 
     document.body.appendChild(menu);
     const rect=trigger.getBoundingClientRect();
     const width=Math.max(180,rect.width);
-    const estimated=Math.min(300,Math.max(52,select.options.length*38+10));
+    const estimated=Math.min(360,Math.max(52,select.options.length*38+10+(searchable?52:0)));
     const left=Math.max(8,Math.min(window.innerWidth-width-8,rect.left));
     const placeAbove=rect.bottom+estimated+8>window.innerHeight&&rect.top>estimated+8;
     const top=placeAbove?Math.max(8,rect.top-estimated-6):Math.min(window.innerHeight-estimated-8,rect.bottom+6);
@@ -94,7 +135,7 @@
     trigger.classList.add('is-open');
     trigger.setAttribute('aria-expanded','true');
     openSelectState={select,trigger,menu};
-    requestAnimationFrame(()=>menu.classList.add('is-visible'));
+    requestAnimationFrame(()=>{menu.classList.add('is-visible');if(searchable)search.focus();else menu.querySelector('.selected:not(:disabled)')?.focus()});
   }
 
   function enhanceSelect(select){

@@ -48,6 +48,9 @@ const ROLE_PERMISSION_DEFAULTS = {
 };
 const GOOGLE_SHEET_ID = process.env.BFBS_GOOGLE_SHEET_ID || '1oaf7MiFLdMpOI-syYOaJEeXpIyGRLzkGkUXvlMbJroU';
 const GOOGLE_SHEET_GID = process.env.BFBS_GOOGLE_SHEET_GID || '0';
+const WB_API_BASE = String(process.env.BFBS_WB_API_BASE || 'https://marketplace-api.wildberries.ru').replace(/\/$/,'');
+const WB_CACHE_MS = Math.max(5000, Number(process.env.BFBS_WB_CACHE_SECONDS || 20) * 1000);
+let wbOrdersCache={orders:[],updatedAt:null,expiresAt:0};
 
 if(CLOUD_PROVIDER === 'railway' && !PERSISTENT_STORAGE){
   console.warn('[B-FBS] Railway volume is not attached. SQLite data will be ephemeral until a volume is mounted.');
@@ -391,6 +394,29 @@ async function googleSummaryItems(){
   return [...items.values()].sort((a,b)=>String(a.article).localeCompare(String(b.article),'ru')||String(a.size).localeCompare(String(b.size),'ru'));
 }
 
+async function wbNewOrders(force=false){
+  const apiToken=String(process.env.WB_API_TOKEN||'').trim();
+  if(!apiToken) throw Object.assign(new Error('WB API не подключён. Задайте WB_API_TOKEN на сервере.'),{status:503});
+  if(!force&&wbOrdersCache.updatedAt&&Date.now()<wbOrdersCache.expiresAt)return wbOrdersCache;
+  const controller=new AbortController(),timeout=setTimeout(()=>controller.abort(),10000);
+  let response;
+  try{
+    response=await fetch(`${WB_API_BASE}/api/v3/orders/new`,{signal:controller.signal,headers:{Authorization:apiToken,'User-Agent':'B-FBS/2.0','Accept':'application/json'}});
+  }catch(error){
+    const message=error?.name==='AbortError'?'WB API не ответил за 10 секунд.':'Не удалось подключиться к WB API.';
+    throw Object.assign(new Error(message),{status:502});
+  }finally{clearTimeout(timeout)}
+  if(!response.ok){
+    const messages={401:'WB отклонил API-токен.',403:'У токена нет категории «Маркетплейс».',429:'WB временно ограничил частоту запросов.'};
+    throw Object.assign(new Error(messages[response.status]||`WB API вернул ошибку ${response.status}.`),{status:response.status===429?429:502});
+  }
+  let payload;
+  try{payload=await response.json()}catch(_){throw Object.assign(new Error('WB API вернул некорректный ответ.'),{status:502})}
+  const orders=Array.isArray(payload?.orders)?payload.orders:[];
+  wbOrdersCache={orders,updatedAt:now(),expiresAt:Date.now()+WB_CACHE_MS};
+  return wbOrdersCache;
+}
+
 async function api(req, res, pathname){
   if(req.method === 'GET' && pathname === '/api/health'){
     const stateRow = db.prepare('SELECT revision,updated_at FROM app_state WHERE id=1').get();
@@ -541,7 +567,16 @@ async function api(req, res, pathname){
   }
   if(req.method === 'GET' && pathname === '/api/wb/status'){
     const user = requireUser(req, res, ['admin','manager']); if(!user)return;
-    send(res,200,{configured:!!process.env.WB_API_TOKEN,message:process.env.WB_API_TOKEN?'Ключ задан на сервере.':'Задайте WB_API_TOKEN в окружении сервера.'});return;
+    send(res,200,{configured:!!process.env.WB_API_TOKEN,lastSyncAt:wbOrdersCache.updatedAt,message:process.env.WB_API_TOKEN?'Ключ задан на сервере.':'Задайте WB_API_TOKEN в окружении сервера.'});return;
+  }
+  if((req.method === 'GET'||req.method === 'POST') && pathname === '/api/wb/orders/new'){
+    const user = requirePermission(req, res, req.method==='POST'?'tasks_manage':'tasks_view'); if(!user)return;
+    try{
+      const result=await wbNewOrders(req.method==='POST');
+      if(req.method==='POST')audit(user.id,'wb.orders_synced','wb','orders',{count:result.orders.length});
+      send(res,200,{orders:result.orders,updatedAt:result.updatedAt,cached:Date.now()<result.expiresAt});
+    }catch(error){send(res,error.status||502,{error:error.message||'Не удалось получить заказы WB.'})}
+    return;
   }
   if(req.method === 'GET' && pathname === '/api/google-sheet/summary'){
     const user = requirePermission(req, res, 'inventory_view'); if(!user)return;
