@@ -13,6 +13,7 @@ const CLOUD_PROVIDER = process.env.RAILWAY_ENVIRONMENT ? 'railway' : '';
 const RAILWAY_VOLUME_DIR = String(process.env.RAILWAY_VOLUME_MOUNT_PATH || '').trim();
 const DATA_DIR = path.resolve(process.env.BFBS_DATA_DIR || RAILWAY_VOLUME_DIR || path.join(ROOT, 'data'));
 const DB_PATH = path.join(DATA_DIR, 'b-fbs.sqlite');
+const SECRET_KEY_PATH = path.join(DATA_DIR, '.bfbs-secret-key');
 const PERSISTENT_STORAGE = CLOUD_PROVIDER !== 'railway' || !!(RAILWAY_VOLUME_DIR || process.env.BFBS_DATA_DIR);
 const SESSION_TTL_MS = Number(process.env.BFBS_SESSION_HOURS || 24) * 60 * 60 * 1000;
 const MAX_BODY = 10 * 1024 * 1024;
@@ -93,6 +94,12 @@ db.exec(`
     details TEXT,
     created_at TEXT NOT NULL
   );
+  CREATE TABLE IF NOT EXISTS server_settings (
+    key TEXT PRIMARY KEY,
+    value TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    updated_by TEXT
+  );
   CREATE INDEX IF NOT EXISTS idx_audit_created ON audit_log(created_at DESC);
   CREATE INDEX IF NOT EXISTS idx_sessions_expiry ON sessions(expires_at);
 `);
@@ -104,6 +111,31 @@ if(!userColumns.some(column=>column.name==='permissions_json')){
 function now(){ return new Date().toISOString(); }
 function json(value){ return JSON.stringify(value); }
 function parseJson(value, fallback){ try{return JSON.parse(value)}catch(_){return fallback} }
+function secretKey(){
+  const configured=String(process.env.BFBS_SECRET_KEY||'').trim();
+  if(configured)return crypto.createHash('sha256').update(configured).digest();
+  let raw;
+  try{raw=fs.readFileSync(SECRET_KEY_PATH)}catch(error){
+    if(error.code!=='ENOENT')throw error;
+    raw=crypto.randomBytes(32);
+    fs.writeFileSync(SECRET_KEY_PATH,raw,{mode:0o600,flag:'wx'});
+  }
+  return crypto.createHash('sha256').update(raw).digest();
+}
+function encryptSecret(value){
+  const iv=crypto.randomBytes(12),cipher=crypto.createCipheriv('aes-256-gcm',secretKey(),iv);
+  const encrypted=Buffer.concat([cipher.update(String(value),'utf8'),cipher.final()]);
+  return [iv,cipher.getAuthTag(),encrypted].map(part=>part.toString('base64url')).join('.');
+}
+function decryptSecret(value){
+  const [iv,tag,encrypted]=String(value||'').split('.').map(part=>Buffer.from(part||'','base64url'));
+  if(iv.length!==12||tag.length!==16||!encrypted.length)throw new Error('Повреждено защищённое хранилище ключей.');
+  const decipher=crypto.createDecipheriv('aes-256-gcm',secretKey(),iv);decipher.setAuthTag(tag);
+  return Buffer.concat([decipher.update(encrypted),decipher.final()]).toString('utf8');
+}
+function wbTokenRecord(){return db.prepare("SELECT value,updated_at,updated_by FROM server_settings WHERE key='wb_api_token'").get()||null}
+function wbApiToken(){const row=wbTokenRecord();return row?decryptSecret(row.value).trim():String(process.env.WB_API_TOKEN||'').trim()}
+function wbTokenStatus(){const row=wbTokenRecord();return {configured:!!(row||String(process.env.WB_API_TOKEN||'').trim()),source:row?'site':(process.env.WB_API_TOKEN?'environment':null),updatedAt:row?.updated_at||null}}
 function passwordHash(password, salt = crypto.randomBytes(16).toString('hex')){
   return `${salt}:${crypto.scryptSync(String(password), salt, 64).toString('hex')}`;
 }
@@ -394,8 +426,8 @@ async function googleSummaryItems(){
   return [...items.values()].sort((a,b)=>String(a.article).localeCompare(String(b.article),'ru')||String(a.size).localeCompare(String(b.size),'ru'));
 }
 
-async function wbNewOrders(force=false){
-  const apiToken=String(process.env.WB_API_TOKEN||'').trim();
+async function wbNewOrders(force=false,tokenOverride=''){
+  const apiToken=String(tokenOverride||wbApiToken()).trim();
   if(!apiToken) throw Object.assign(new Error('WB API не подключён. Задайте WB_API_TOKEN на сервере.'),{status:503});
   if(!force&&wbOrdersCache.updatedAt&&Date.now()<wbOrdersCache.expiresAt)return wbOrdersCache;
   const controller=new AbortController(),timeout=setTimeout(()=>controller.abort(),10000);
@@ -429,7 +461,7 @@ async function api(req, res, pathname){
       revision:Number(stateRow?.revision||0),
       stateUpdatedAt:stateRow?.updated_at||null,
       time:now(),
-      wbConfigured:!!process.env.WB_API_TOKEN
+      wbConfigured:wbTokenStatus().configured
     });
     return;
   }
@@ -567,7 +599,29 @@ async function api(req, res, pathname){
   }
   if(req.method === 'GET' && pathname === '/api/wb/status'){
     const user = requireUser(req, res, ['admin','manager']); if(!user)return;
-    send(res,200,{configured:!!process.env.WB_API_TOKEN,lastSyncAt:wbOrdersCache.updatedAt,message:process.env.WB_API_TOKEN?'Ключ задан на сервере.':'Задайте WB_API_TOKEN в окружении сервера.'});return;
+    const status=wbTokenStatus();
+    send(res,200,{...status,lastSyncAt:wbOrdersCache.updatedAt,canManage:user.role==='admin',message:status.configured?'Интеграция WB подключена.':'Добавьте API-ключ Wildberries.'});return;
+  }
+  if(req.method === 'PUT' && pathname === '/api/wb/token'){
+    const user = requireUser(req, res, ['admin']); if(!user)return;
+    const body=await readBody(req),apiToken=String(body.token||'').trim();
+    if(apiToken.length<20||apiToken.length>8192){send(res,400,{error:'Вставьте полный API-токен Wildberries.'});return}
+    try{
+      const result=await wbNewOrders(true,apiToken),timestamp=now();
+      db.prepare("INSERT INTO server_settings(key,value,updated_at,updated_by) VALUES('wb_api_token',?,?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value,updated_at=excluded.updated_at,updated_by=excluded.updated_by")
+        .run(encryptSecret(apiToken),timestamp,user.id);
+      audit(user.id,'wb.token_updated','wb','integration');
+      send(res,200,{configured:true,source:'site',updatedAt:timestamp,lastSyncAt:result.updatedAt,ordersCount:result.orders.length,message:'Ключ проверен и сохранён на сервере.'});
+    }catch(error){send(res,error.status||502,{error:error.message||'Не удалось проверить API-токен WB.'})}
+    return;
+  }
+  if(req.method === 'DELETE' && pathname === '/api/wb/token'){
+    const user = requireUser(req, res, ['admin']); if(!user)return;
+    db.prepare("DELETE FROM server_settings WHERE key='wb_api_token'").run();
+    wbOrdersCache={orders:[],updatedAt:null,expiresAt:0};
+    audit(user.id,'wb.token_deleted','wb','integration');
+    const status=wbTokenStatus();
+    send(res,200,{...status,lastSyncAt:null,message:status.configured?'Используется ключ из окружения сервера.':'Интеграция WB отключена.'});return;
   }
   if((req.method === 'GET'||req.method === 'POST') && pathname === '/api/wb/orders/new'){
     const user = requirePermission(req, res, req.method==='POST'?'tasks_manage':'tasks_view'); if(!user)return;
