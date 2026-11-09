@@ -22,6 +22,8 @@ jobs:
         run: pnpm install --frozen-lockfile
       - name: Syntax check
         run: pnpm run check
+      - name: Stock calculator unit tests
+        run: pnpm run test:calculator
       - name: Server integration tests
         env:
           BFBS_ADMIN_PASSWORD: CI-Admin-Password-123!

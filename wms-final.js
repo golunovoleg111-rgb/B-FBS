@@ -33,7 +33,7 @@
     picker:{dashboard_view:true,workspace_view:true,layout_manage:false,zones_manage:false,inventory_view:true,inventory_manage:false,nomenclature_manage:false,transfers_view:true,transfers_manage:true,revisions_view:false,revisions_manage:false,tasks_view:true,tasks_manage:false,tasks_pick:true},
     auditor:{dashboard_view:true,workspace_view:true,layout_manage:false,zones_manage:false,inventory_view:true,inventory_manage:false,nomenclature_manage:false,transfers_view:false,transfers_manage:false,revisions_view:true,revisions_manage:true,tasks_view:false,tasks_manage:false,tasks_pick:false}
   };
-  const TAB_PERMISSION={dashboard:'dashboard_view',workspace:'workspace_view',inventory:'inventory_view',transfer:'transfers_view',revision:'revisions_view',tasks:'tasks_view'};
+  const TAB_PERMISSION={dashboard:'dashboard_view',workspace:'workspace_view',inventory:'inventory_view',transfer:'transfers_view',revision:'revisions_view',tasks:'tasks_view',calculator:'nomenclature_manage'};
   const EMPTY_WMS={nomenclature:[],boxes:[],transfers:[],revisions:[],tasks:[],movements:[],events:[]};
   let wms=loadWms();
   let currentUser=readJson(sessionStorage.getItem(USER_KEY),null);
@@ -270,6 +270,7 @@
     if(tab?.[0]==='transfer')return transferView();
     if(tab?.[0]==='revision')return revisionView();
     if(tab?.[0]==='tasks')return tasksView();
+    if(tab?.[0]==='calculator')return can('nomenclature_manage')&&window.stockCalculatorView?window.stockCalculatorView():'<div class="panel">Нет доступа к инструменту.</div>';
     return `<div class="panel empty-section"><div class="panel-title">${esc(tab?.[1]||'Раздел')}</div><p>Раздел готовится.</p></div>`;
   };
 
@@ -280,6 +281,7 @@
     document.querySelectorAll('[data-tab]').forEach(button=>button.addEventListener('click',()=>{if(allowed(button.dataset.tab)){activeTab=button.dataset.tab;window.render()}}));
     document.getElementById('logout')?.addEventListener('click',async()=>{try{if(backendAvailable&&token())await requestApi('/api/auth/logout',{method:'POST',body:'{}'})}catch(_){}sessionStorage.removeItem(TOKEN_KEY);sessionStorage.removeItem(USER_KEY);sessionStorage.removeItem(AUTH_KEY);currentUser=null;window.render()});
     bindInventory();bindAccount();bindTransfers();bindRevisions();bindTasks();
+    if(activeTab==='calculator'&&can('nomenclature_manage'))window.bindStockCalculator?.();
   };
 
   function inventoryWarehouseId(){
